@@ -1,0 +1,39 @@
+# Document Analysis System Requirements (Simplified)
+# 基础框架
+streamlit>=1.24.0
+fastapi>=0.104.0
+uvicorn>=0.24.0
+python-dotenv>=1.0.0
+
+# 文档处理库 (核心功能)
+python-docx>=0.8.11       # .docx 文件处理
+python-pptx>=0.6.21       # .pptx 文件处理
+openpyxl>=3.1.2           # .xlsx 文件处理
+PyPDF2>=3.0.1             # .pdf 文件处理
+pdfplumber>=0.9.0         # 高级PDF处理
+xlrd>=2.0.1               # 旧版Excel文件支持
+
+# 大语言模型相关 (简化版)
+ollama>=0.1.0
+openai>=1.0.0             # 可选：支持OpenAI API
+
+# 数据分析
+pandas>=2.0.0
+numpy>=1.24.0
+matplotlib>=3.7.0
+seaborn>=0.12.0
+plotly>=5.17.0
+
+# 工具库
+requests>=2.27.0
+aiohttp>=3.8.5
+asyncio>=3.4.3
+nest_asyncio>=1.5.6
+loguru>=0.7.0
+click>=8.1.0
+tqdm>=4.65.0
+jinja2>=3.1.0
+
+# 开发工具 (可选)
+pytest>=7.4.0
+black>=23.3.0
