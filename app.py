@@ -40,6 +40,12 @@ try:
     # from mcp_services.file_operations import FileOperationsService
     from agents.base_agent import agent_coordinator
     from utils.llm_utils import llm_manager
+    from utils.rag_utils import (
+        compute_file_id,
+        build_or_load_index,
+        retrieve_with_optional_rerank,
+        build_context_from_chunks,
+    )
 except ImportError as e:
     st.error(f"模块导入失败: {e}")
     st.stop()
@@ -166,7 +172,7 @@ def display_qa_results(result: Dict[str, Any]):
         with col2:
             st.metric("回答长度", f"{result.get('answer_length', 0):,} 字符")
 
-async def process_document_qa(uploaded_file, question, answer_style="detailed", include_quotes=True, confidence_threshold=0.7):
+async def process_document_qa(uploaded_file, question, answer_style="detailed", include_quotes=True, confidence_threshold=0.7, enable_advanced_confidence: bool = False, use_rag: bool = True, use_reranker: bool = True, rag_top_k: int = 12, rag_rerank_top_n: int = 6):
     """处理文档问答"""
     try:
         # 进度指示
@@ -196,14 +202,35 @@ async def process_document_qa(uploaded_file, question, answer_style="detailed", 
             
             progress_bar.progress(75, text="🤖 AI正在思考答案...")
             
+            # RAG：构建/加载索引并检索相关片段
+            retrieved_context = None
+            relevant_passages = None
+            if use_rag:
+                file_id = compute_file_id(str(file_path))
+                store, embedder, _ = build_or_load_index(file_id=file_id, text=text_content)
+                chunks = retrieve_with_optional_rerank(
+                    query=question,
+                    store=store,
+                    embedder=embedder,
+                    top_k=rag_top_k,
+                    rerank_top_n=rag_rerank_top_n,
+                    use_reranker=use_reranker,
+                )
+                if chunks:
+                    retrieved_context = build_context_from_chunks(chunks)
+                    # 供 UI 展示引用
+                    relevant_passages = [c.text for c in chunks]
+
             # 执行问答
             qa_input = {
-                "document_content": text_content,
+                "document_content": text_content if not retrieved_context else retrieved_context,
                 "question": question,
                 "document_type": Path(uploaded_file.name).suffix,
                 "answer_style": answer_style,
                 "include_quotes": include_quotes,
-                "confidence_threshold": confidence_threshold
+                "confidence_threshold": confidence_threshold,
+                "enable_advanced_confidence": enable_advanced_confidence,
+                "rag_enabled": use_rag,
             }
             
             qa_result = await agent_coordinator.execute_agent(
@@ -214,6 +241,9 @@ async def process_document_qa(uploaded_file, question, answer_style="detailed", 
             progress_bar.progress(100, text="✅ 问答完成！")
             
             if qa_result.get("success", False):
+                # 将 RAG 的引用片段透传到展示层
+                if relevant_passages:
+                    qa_result["result"]["relevant_passages"] = relevant_passages
                 display_qa_results(qa_result["result"])
             else:
                 st.error(f"❌ 问答失败: {qa_result.get('error', '未知错误')}")
@@ -293,6 +323,17 @@ def main():
             with col2:
                 include_quotes = st.checkbox("📖 包含原文引用", value=True)
                 confidence_threshold = st.slider("置信度阈值", 0.3, 1.0, 0.7, 0.1)
+            # 高级置信度评估开关（默认关闭以提升速度）
+            enable_advanced_confidence = st.checkbox("⚙️ 启用高级置信度评估（较慢）", value=False, help="开启后将调用额外一次模型对答案进行置信度打分，可能显著增加响应时间")
+            # RAG 相关参数
+            use_rag = st.checkbox("🧠 启用RAG检索增强", value=True)
+            col3, col4, col5 = st.columns(3)
+            with col3:
+                rag_top_k = st.slider("向量召回TopK", 4, 30, 12, 1)
+            with col4:
+                use_reranker = st.checkbox("🔎 启用重排", value=True)
+            with col5:
+                rag_rerank_top_n = st.slider("重排后片段数", 2, 12, 6, 1)
         
         # 问答按钮
         if st.button("🔍 开始问答", type="primary", use_container_width=True):
@@ -302,7 +343,18 @@ def main():
                 
             with st.spinner("🔄 AI正在分析文档并准备答案..."):
                 run_async_in_streamlit(
-                    process_document_qa(uploaded_file, question, answer_style, include_quotes, confidence_threshold)
+                    process_document_qa(
+                        uploaded_file,
+                        question,
+                        answer_style,
+                        include_quotes,
+                        confidence_threshold,
+                        enable_advanced_confidence,
+                        use_rag,
+                        use_reranker,
+                        rag_top_k,
+                        rag_rerank_top_n,
+                    )
                 )
                 
     else:
