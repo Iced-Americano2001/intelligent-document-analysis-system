@@ -148,6 +148,9 @@ async def handle_mcp_request(method: str, params: Dict[str, Any],
             method_name = method
             service_name = service_name or "default"
         
+        logger.info(f"处理MCP请求: 服务={service_name}, 方法={method_name}")
+        logger.info(f"可用服务: {list(mcp_manager.services.keys())}")
+        
         # 创建请求
         request = MCPRequest(method=method_name, params=params)
         
