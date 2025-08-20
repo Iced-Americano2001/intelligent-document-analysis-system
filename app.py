@@ -1,3 +1,4 @@
+
 import streamlit as st
 import asyncio
 from pathlib import Path
@@ -61,30 +62,42 @@ def initialize_services():
     try:
         # 初始化MCP服务
         doc_parser_service = DocumentParserService()
-        # 暂时只初始化文档解析服务，跳过有问题的文件操作服务
+        
+        # 先注册服务
         mcp_manager.register_service(doc_parser_service)
+        logger.info(f"服务已注册: {doc_parser_service.service_name}")
         
-        # 直接调用服务初始化（不通过异步方式）
-        import asyncio
-        
-        # 创建临时事件循环来初始化服务
+        # 然后初始化服务
         try:
-            # 尝试在当前线程初始化
-            loop = asyncio.get_event_loop()
-            if loop.is_running():
-                # 如果循环正在运行，创建任务
-                future = asyncio.ensure_future(doc_parser_service.initialize())
-            else:
-                # 如果循环未运行，直接运行
-                init_success = loop.run_until_complete(doc_parser_service.initialize())
-        except RuntimeError:
-            # 创建新的事件循环
+            # 创建新的事件循环来初始化服务
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
+            
+            # 初始化服务
+            init_success = loop.run_until_complete(doc_parser_service.initialize())
+            if not init_success:
+                logger.error("文档解析服务初始化失败")
+                return False
+                
+            logger.info("文档解析服务初始化成功")
+            
+        except Exception as e:
+            logger.error(f"服务初始化异常: {e}")
+            return False
+        finally:
+            # 清理事件循环
             try:
-                init_success = loop.run_until_complete(doc_parser_service.initialize())
-            finally:
                 loop.close()
+            except:
+                pass
+        
+        # 验证服务是否正确注册
+        registered_services = mcp_manager.get_all_services()
+        logger.info(f"已注册的服务: {list(registered_services.keys())}")
+        
+        if "document_parser" not in registered_services:
+            logger.error("document_parser 服务未正确注册")
+            return False
         
         # 初始化并注册智能体
         from agents.qa_agent import QAAgent
@@ -93,6 +106,7 @@ def initialize_services():
         
         logger.info("文档解析服务和智能体初始化完成")
         return True
+        
     except Exception as e:
         logger.error(f"服务初始化失败: {e}")
         import traceback
@@ -196,9 +210,13 @@ async def process_document_qa(uploaded_file, question, answer_style="detailed", 
             method="document_parser/extract_text",
             params={"file_path": str(file_path)}
         )
-        
-        if parse_result.get("result", {}).get("success", False):
-            text_content = parse_result["result"]["result"]["text_content"]
+
+        # 健壮性检查：避免在 result 为 None 时调用 .get 导致错误
+        result_obj = parse_result.get("result") or {}
+        if result_obj.get("success", False) and isinstance(result_obj.get("result"), dict):
+            text_content = result_obj["result"].get("text_content", "")
+            if text_content is None:
+                text_content = ""
             
             progress_bar.progress(75, text="🤖 AI正在思考答案...")
             
@@ -249,8 +267,13 @@ async def process_document_qa(uploaded_file, question, answer_style="detailed", 
                 st.error(f"❌ 问答失败: {qa_result.get('error', '未知错误')}")
                 st.warning("💡 建议重新表述问题或检查文档内容")
         else:
+            # 当解析失败时，展示更详细的错误信息
+            error_message = (parse_result.get("error") or {}).get("message", "未知错误")
             st.error("❌ 文档解析失败")
+            if error_message:
+                st.warning(f"错误详情: {error_message}")
             st.warning("💡 请检查文档格式是否正确")
+            return
             
     except Exception as e:
         st.error(f"❌ 问答处理失败: {str(e)}")
@@ -326,12 +349,12 @@ def main():
             # 高级置信度评估开关（默认关闭以提升速度）
             enable_advanced_confidence = st.checkbox("⚙️ 启用高级置信度评估（较慢）", value=False, help="开启后将调用额外一次模型对答案进行置信度打分，可能显著增加响应时间")
             # RAG 相关参数
-            use_rag = st.checkbox("🧠 启用RAG检索增强", value=True)
+            use_rag = st.checkbox("启用RAG", value=True)
             col3, col4, col5 = st.columns(3)
             with col3:
                 rag_top_k = st.slider("向量召回TopK", 4, 30, 12, 1)
             with col4:
-                use_reranker = st.checkbox("🔎 启用重排", value=True)
+                use_reranker = st.checkbox("启用重排", value=True)
             with col5:
                 rag_rerank_top_n = st.slider("重排后片段数", 2, 12, 6, 1)
         
