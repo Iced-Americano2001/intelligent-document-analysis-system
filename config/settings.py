@@ -9,6 +9,7 @@ OLLAMA_CONFIG = {
     "host": os.getenv("OLLAMA_HOST", "http://localhost:11434"),
     "model": os.getenv("OLLAMA_MODEL", "llama3.2:3b"),
     "timeout": int(os.getenv("OLLAMA_TIMEOUT", "120")),
+    "max_tokens": int(os.getenv("OLLAMA_MAX_TOKENS", "2000")),
 }
 
 # OpenAI 配置 (支持第三方API转发)
@@ -109,10 +110,35 @@ FILE_CONFIG = {
     "temp_dir": os.getenv("TEMP_DIR", "temp/"),
 }
 
-# MCP 配置
+# MCP服务器配置 (Model Context Protocol)
 MCP_CONFIG = {
-    "server_host": os.getenv("MCP_SERVER_HOST", "localhost"),
-    "server_port": int(os.getenv("MCP_SERVER_PORT", "8000")),
+    "enabled": os.getenv("MCP_SERVER_ENABLED", "true").lower() == "true",
+    
+    # 方式1: 完整URL配置 (优先使用)
+    "server_url": os.getenv("MCP_SERVER_URL", ""),
+    
+    # 方式2: 分离配置 (向后兼容)
+    "host": os.getenv("MCP_SERVER_HOST", "localhost"),
+    "port": int(os.getenv("MCP_SERVER_PORT", "8503")),
+    
+    # 流式响应配置
+    "streaming_enabled": os.getenv("MCP_STREAMING_ENABLED", "true").lower() == "true",
+    "stream_timeout": int(os.getenv("MCP_STREAM_TIMEOUT", "30")),
+    
+    # 工具配置
+    "tools_enabled": os.getenv("MCP_TOOLS_ENABLED", "true").lower() == "true",
+    "tools_auto_register": os.getenv("MCP_TOOLS_AUTO_REGISTER", "true").lower() == "true",
+    
+    # 智能体配置
+    "agent_max_iterations": int(os.getenv("MCP_AGENT_MAX_ITERATIONS", "10")),
+    "agent_timeout": int(os.getenv("MCP_AGENT_TIMEOUT", "120")),
+    "agent_show_thinking": os.getenv("MCP_AGENT_SHOW_THINKING", "true").lower() == "true",
+    
+    # 调试配置
+    "debug": os.getenv("MCP_DEBUG", "false").lower() == "true",
+    "log_tool_calls": os.getenv("MCP_LOG_TOOL_CALLS", "true").lower() == "true",
+    
+    # 传统配置保持兼容
     "max_connections": int(os.getenv("MCP_MAX_CONNECTIONS", "100")),
     "timeout": int(os.getenv("MCP_TIMEOUT", "30")),
 }
@@ -325,3 +351,51 @@ def validate_api_config(config: Dict[str, Any]) -> bool:
             return False
     
     return True
+
+# MCP服务器辅助函数
+def is_mcp_enabled() -> bool:
+    """检查MCP服务器是否启用"""
+    return MCP_CONFIG.get("enabled", True)
+
+def get_mcp_server_url() -> str:
+    """获取MCP服务器完整URL - 智能处理两种配置方式"""
+    
+    # 方式1: 优先使用完整URL配置
+    server_url = MCP_CONFIG.get("server_url", "").strip()
+    if server_url:
+        return server_url
+    
+    # 方式2: 从host和port构建URL (向后兼容)
+    host = MCP_CONFIG.get("host", "localhost")
+    port = MCP_CONFIG.get("port", 8503)
+    
+    # 智能判断协议
+    if port == 443:
+        protocol = "https"
+        url = f"{protocol}://{host}"
+    elif port == 80:
+        protocol = "http" 
+        url = f"{protocol}://{host}"
+    else:
+        protocol = "https" if port == 443 else "http"
+        url = f"{protocol}://{host}:{port}"
+    
+    return url
+
+def get_mcp_agent_config() -> Dict[str, Any]:
+    """获取MCP智能体配置"""
+    return {
+        "max_iterations": MCP_CONFIG.get("agent_max_iterations", 10),
+        "timeout": MCP_CONFIG.get("agent_timeout", 120),
+        "show_thinking": MCP_CONFIG.get("agent_show_thinking", True),
+        "debug": MCP_CONFIG.get("debug", False),
+        "log_tool_calls": MCP_CONFIG.get("log_tool_calls", True),
+    }
+
+def is_mcp_streaming_enabled() -> bool:
+    """检查MCP流式响应是否启用"""
+    return MCP_CONFIG.get("streaming_enabled", True)
+
+def is_mcp_tools_auto_register() -> bool:
+    """检查MCP工具是否自动注册"""
+    return MCP_CONFIG.get("tools_auto_register", True)

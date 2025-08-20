@@ -357,7 +357,7 @@ class MultiDocumentQAAgent(QAAgent):
 
 综合回答:"""
             
-            return await self._get_llm_response(synthesis_prompt, max_tokens=2000)
+            return await self._get_llm_response(synthesis_prompt, max_tokens=4096)
             
         except Exception as e:
             logger.error(f"答案综合失败: {e}")

@@ -265,3 +265,88 @@ AI洞察:
         except Exception as e:
             logger.error(f"建议生成失败: {e}")
             return ["建议生成失败，请手动分析数据结果"]
+    
+    async def validate_input(self, input_data: Any) -> bool:
+        """验证输入数据"""
+        if not isinstance(input_data, dict):
+            return False
+        
+        data = input_data.get("data")
+        if data is None:
+            return False
+        
+        # 检查数据格式
+        try:
+            if isinstance(data, (list, dict)):
+                return True
+            elif hasattr(data, 'to_dict'):  # pandas DataFrame
+                return True
+            else:
+                return False
+        except:
+            return False
+    
+    async def preprocess(self, input_data: Any) -> Any:
+        """预处理输入数据"""
+        if isinstance(input_data, dict):
+            processed_data = input_data.copy()
+            
+            # 确保有默认的分析类型
+            if "analysis_type" not in processed_data:
+                processed_data["analysis_type"] = "comprehensive"
+            
+            # 确保有数据源信息
+            if "source" not in processed_data:
+                processed_data["source"] = "unknown"
+            
+            return processed_data
+        
+        return input_data
+
+class SpecializedAnalysisAgent(AnalysisAgent):
+    """专业化分析智能体"""
+    
+    def __init__(self, specialization: str):
+        super().__init__()
+        self.specialization = specialization
+        self.name = f"Specialized_Analysis_Agent_{specialization}"
+        self.description = f"专门进行{specialization}分析的智能体"
+        self.add_capability(f"{specialization}_analysis")
+    
+    async def process(self, input_data: Any, context: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        """处理专业化分析请求"""
+        # 设置专业化的分析类型
+        if isinstance(input_data, dict):
+            input_data = input_data.copy()
+            input_data["analysis_type"] = self.specialization
+            input_data["requirements"] = input_data.get("requirements", "") + f" 请特别关注{self.specialization}相关的分析。"
+        
+        # 调用基类方法
+        result = await super().process(input_data, context)
+        
+        # 添加专业化信息
+        result["specialization"] = self.specialization
+        result["specialized_insights"] = await self._get_specialized_insights(result)
+        
+        return result
+    
+    async def _get_specialized_insights(self, base_result: Dict[str, Any]) -> str:
+        """获取专业化洞察"""
+        try:
+            specialized_prompt = f"""作为{self.specialization}分析专家，请基于以下分析结果提供专业洞察：
+
+基础分析结果:
+{base_result.get('ai_insights', '')}
+
+数据摘要:
+{self._format_data_summary(base_result.get('data_summary', {}))}
+
+请从{self.specialization}的专业角度提供深入分析和建议。
+
+专业洞察:"""
+            
+            return await self._get_llm_response(specialized_prompt, max_tokens=4096)
+            
+        except Exception as e:
+            logger.error(f"专业化洞察生成失败: {e}")
+            return f"专业化洞察生成失败: {str(e)}"

@@ -29,6 +29,7 @@ class OllamaClient(BaseLLMClient):
         super().__init__(model_name or OLLAMA_CONFIG['model'])
         self.base_url = OLLAMA_CONFIG['host']
         self.timeout = OLLAMA_CONFIG['timeout']
+        self.max_tokens = OLLAMA_CONFIG.get('max_tokens', 2000)
         
         # 确保URL格式正确
         if not self.base_url.startswith('http'):
@@ -48,7 +49,7 @@ class OllamaClient(BaseLLMClient):
                 "options": {
                     "temperature": kwargs.get("temperature", 0.7),
                     "top_p": kwargs.get("top_p", 0.9),
-                    "max_tokens": kwargs.get("max_tokens", 2000),
+                    "max_tokens": kwargs.get("max_tokens", self.max_tokens),
                 }
             }
             
@@ -93,7 +94,7 @@ class OllamaClient(BaseLLMClient):
                 "options": {
                     "temperature": kwargs.get("temperature", 0.7),
                     "top_p": kwargs.get("top_p", 0.9),
-                    "max_tokens": kwargs.get("max_tokens", 2000),
+                    "max_tokens": kwargs.get("max_tokens", self.max_tokens),
                 }
             }
             
@@ -286,7 +287,7 @@ class ThirdPartyAPIClient(BaseLLMClient):
             # 移除None值以保持clean payload
             payload = {k: v for k, v in payload.items() if v is not None}
             
-            logger.info(f"发送请求到: {url}")
+            logger.debug(f"发送请求到: {url}")
             logger.debug(f"请求头: Authorization=Bearer {self.api_key[:10]}...")
             logger.debug(f"请求体: {payload}")
             
@@ -306,6 +307,7 @@ class ThirdPartyAPIClient(BaseLLMClient):
                     ) as session:
                         async with session.post(url, json=payload, headers=headers) as response:
                             response_text = await response.text()
+                            logger.debug(f"接收到API响应 (状态码: {response.status}): {response_text}")
                             
                             if response.status == 200:
                                 try:
@@ -320,7 +322,7 @@ class ThirdPartyAPIClient(BaseLLMClient):
                                             message = choice['message']
                                             # 确保message有content
                                             if 'content' in message and message['content']:
-                                                logger.info("✅ 第三方API调用成功")
+                                                logger.debug("✅ 第三方API调用成功")
                                                 return {
                                                     "success": True,
                                                     "message": message,
@@ -447,6 +449,8 @@ class LLMManager:
     async def generate_completion(self, prompt: str, provider: Optional[str] = None, **kwargs) -> Dict[str, Any]:
         """生成文本补全 - 支持自动回退"""
         target_provider = provider or self.default_provider
+        # 统一按提供商配置对齐/收敛 max_tokens
+        kwargs = self._apply_max_tokens_policy(kwargs, target_provider)
         
         try:
             client = self.get_client(target_provider)
@@ -484,6 +488,8 @@ class LLMManager:
     async def chat_completion(self, messages: List[Dict], provider: Optional[str] = None, **kwargs) -> Dict[str, Any]:
         """聊天补全 - 支持自动回退"""
         target_provider = provider or self.default_provider
+        # 统一按提供商配置对齐/收敛 max_tokens
+        kwargs = self._apply_max_tokens_policy(kwargs, target_provider)
         
         try:
             client = self.get_client(target_provider)
@@ -537,6 +543,33 @@ class LLMManager:
                 "provider": provider or self.default_provider,
                 "message": f"连接测试异常: {str(e)}"
             }
+
+    def _apply_max_tokens_policy(self, kwargs: Dict[str, Any], provider: str) -> Dict[str, Any]:
+        """根据当前提供商的配置对齐/收敛 max_tokens 参数。"""
+        try:
+            if provider == "openai":
+                default_max = OPENAI_CONFIG.get("max_tokens", 4000)
+            elif provider == "third_party":
+                config = get_third_party_config()
+                default_max = config.get("max_tokens", 4000)
+            elif provider == "ollama":
+                default_max = OLLAMA_CONFIG.get("max_tokens", 2000)
+            else:
+                # 其他提供商（如anthropic）按其配置，若无则给保守默认
+                default_max = ANTHROPIC_CONFIG.get("max_tokens", 4000)
+        except Exception:
+            default_max = 2000
+
+        requested = kwargs.get("max_tokens")
+        if requested is None:
+            aligned = default_max
+        else:
+            aligned = min(int(requested), int(default_max))
+
+        # 返回新的 kwargs，避免污染上游引用
+        new_kwargs = {k: v for k, v in kwargs.items() if k != "max_tokens"}
+        new_kwargs["max_tokens"] = aligned
+        return new_kwargs
 
 # 全局LLM管理器实例
 llm_manager = LLMManager()
