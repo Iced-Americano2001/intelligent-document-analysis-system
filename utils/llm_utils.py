@@ -130,7 +130,7 @@ class OpenAIClient(BaseLLMClient):
     def __init__(self, model_name: Optional[str] = None):
         super().__init__(model_name or OPENAI_CONFIG['model'])
         self.api_key = OPENAI_CONFIG['api_key']
-        self.base_url = "https://api.openai.com/v1"
+        self.base_url = OPENAI_CONFIG.get('base_url', 'https://api.openai.com/v1')
         self.max_tokens = OPENAI_CONFIG['max_tokens']
         
         if not self.api_key:
