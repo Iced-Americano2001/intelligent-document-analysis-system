@@ -419,7 +419,7 @@ class SpecializedAnalysisAgent(AnalysisAgent):
 
 专业洞察:"""
             
-            return await self._get_llm_response(specialized_prompt, max_tokens=1500)
+            return await self._get_llm_response(specialized_prompt, max_tokens=4096)
             
         except Exception as e:
             logger.error(f"专业化洞察生成失败: {e}")

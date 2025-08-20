@@ -57,7 +57,7 @@ class QAAgent(BaseAgent):
             prompt = self._build_qa_prompt(truncated_content, question, document_type)
             
             # 获取LLM响应
-            answer = await self._get_llm_response(prompt, max_tokens=1500)
+            answer = await self._get_llm_response(prompt, max_tokens=4096)
             
             # 分析答案置信度
             confidence = await self._analyze_confidence(question, document_content, answer)
@@ -353,7 +353,7 @@ class MultiDocumentQAAgent(QAAgent):
 
 综合回答:"""
             
-            return await self._get_llm_response(synthesis_prompt, max_tokens=2000)
+            return await self._get_llm_response(synthesis_prompt, max_tokens=4096)
             
         except Exception as e:
             logger.error(f"答案综合失败: {e}")
