@@ -4,6 +4,7 @@ import logging
 import asyncio
 from datetime import datetime
 from utils.llm_utils import llm_manager
+from config.settings import OLLAMA_CONFIG, OPENAI_CONFIG, THIRD_PARTY_API_CONFIG
 
 logger = logging.getLogger(__name__)
 
@@ -29,10 +30,24 @@ class BaseAgent(ABC):
         """获取LLM响应"""
         try:
             # 合并默认参数和传入参数
+            default_max_tokens = 2000
+            try:
+                if self.llm_provider == "ollama":
+                    default_max_tokens = OLLAMA_CONFIG.get("max_tokens", 2000)
+                elif self.llm_provider == "openai":
+                    default_max_tokens = OPENAI_CONFIG.get("max_tokens", 4000)
+                elif self.llm_provider == "third_party":
+                    default_max_tokens = THIRD_PARTY_API_CONFIG.get("max_tokens", 4000)
+            except Exception:
+                default_max_tokens = 2000
+
+            requested_max = kwargs.get("max_tokens")
+            effective_max = default_max_tokens if requested_max is None else min(requested_max, default_max_tokens)
+
             llm_kwargs = {
                 "temperature": self.temperature,
-                "max_tokens": kwargs.get("max_tokens", 2000),
-                **kwargs
+                "max_tokens": effective_max,
+                **{k: v for k, v in kwargs.items() if k != "max_tokens"}
             }
             
             response = await llm_manager.generate_completion(
@@ -53,10 +68,24 @@ class BaseAgent(ABC):
     async def _get_chat_response(self, messages: List[Dict[str, str]], **kwargs) -> str:
         """获取聊天响应"""
         try:
+            default_max_tokens = 2000
+            try:
+                if self.llm_provider == "ollama":
+                    default_max_tokens = OLLAMA_CONFIG.get("max_tokens", 2000)
+                elif self.llm_provider == "openai":
+                    default_max_tokens = OPENAI_CONFIG.get("max_tokens", 4000)
+                elif self.llm_provider == "third_party":
+                    default_max_tokens = THIRD_PARTY_API_CONFIG.get("max_tokens", 4000)
+            except Exception:
+                default_max_tokens = 2000
+
+            requested_max = kwargs.get("max_tokens")
+            effective_max = default_max_tokens if requested_max is None else min(requested_max, default_max_tokens)
+
             llm_kwargs = {
                 "temperature": self.temperature,
-                "max_tokens": kwargs.get("max_tokens", 2000),
-                **kwargs
+                "max_tokens": effective_max,
+                **{k: v for k, v in kwargs.items() if k != "max_tokens"}
             }
             
             response = await llm_manager.chat_completion(
