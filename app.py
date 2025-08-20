@@ -3,6 +3,7 @@ import asyncio
 from pathlib import Path
 from typing import Dict, Any
 import logging
+import pandas as pd
 
 # 尝试导入nest_asyncio，如果失败则使用备用方案
 try:
@@ -43,6 +44,12 @@ try:
     from utils.llm_utils import llm_manager
     from ui.streaming_components import StreamingChatInterface, InteractiveElements
     from ui.status_manager import ConversationStatusManager, PerformanceMonitor
+    from utils.rag_utils import (
+        compute_file_id,
+        build_or_load_index,
+        retrieve_with_optional_rerank,
+        build_context_from_chunks,
+    )
 except ImportError as e:
     st.error(f"模块导入失败: {e}")
     st.stop()
@@ -85,10 +92,13 @@ def initialize_services():
         
         # 初始化并注册智能体
         from agents.qa_agent import QAAgent
+        from agents.analysis_agent import AnalysisAgent
         qa_agent = QAAgent()
+        analysis_agent = AnalysisAgent()
         agent_coordinator.register_agent(qa_agent)
+        agent_coordinator.register_agent(analysis_agent)
         
-        logger.info("文档解析服务和智能体初始化完成")
+        logger.info("文档解析服务、数据分析服务和智能体初始化完成")
         return True
     except Exception as e:
         logger.error(f"服务初始化失败: {e}")
@@ -361,8 +371,84 @@ async def process_mcp_qa(uploaded_file, question, mcp_agent, answer_style="detai
         if 'status_manager' in locals():
             status_manager.complete_conversation(False)
 
+def display_analysis_results(result: Dict[str, Any]):
+    """显示数据分析结果"""
+    st.success("✅ 数据分析完成！")
+
+    # 1. AI 数据分析
+    if "ai_insights" in result:
+        st.markdown("### 🤖 AI 数据分析")
+        st.info(result["ai_insights"])
+
+    # 2. 业务建议
+    if "recommendations" in result and result["recommendations"]:
+        with st.expander("📈 业务建议与行动指南", expanded=True):
+            for rec in result["recommendations"]:
+                st.markdown(f"- {rec}")
+    
+    # 3. 可视化图表
+    if "visualizations" in result and result["visualizations"]:
+        st.markdown("### 🎨 交互式可视化图表")
+        for title, fig in result["visualizations"].items():
+            if fig: # 确保图表对象存在
+                st.plotly_chart(fig, use_container_width=True)
+
+    # 4. 数据摘要
+    with st.expander("📊 数据摘要与统计"):
+        if "data_summary" in result:
+            summary = result["data_summary"]
+            basic_info = summary.get("基本信息", {})
+            cols = st.columns(4)
+            cols[0].metric("数据行数", basic_info.get('行数', 'N/A'))
+            cols[1].metric("数据列数", basic_info.get('列数', 'N/A'))
+            cols[2].metric("内存占用", basic_info.get('内存占用', 'N/A'))
+            cols[3].metric("数据源", basic_info.get('数据源', 'N/A'))
+            
+            if "列信息" in summary:
+                st.markdown("#### 列信息概览")
+                # 将列信息转换为DataFrame以便更好地显示
+                col_df = pd.DataFrame(summary["列信息"]).T
+                st.dataframe(col_df)
+
+        if "statistical_analysis" in result and result["statistical_analysis"].get("descriptive"):
+             st.markdown("#### 描述性统计")
+             st.dataframe(pd.DataFrame(result["statistical_analysis"]["descriptive"]))
+
+
+async def process_data_analysis(uploaded_file, analysis_type, requirements, trend_params):
+    """处理数据分析"""
+    progress_bar = st.progress(0, text="开始数据分析...")
+    try:
+        try:
+            df = pd.read_excel(uploaded_file)
+        except Exception as e:
+            st.error(f"无法读取文件，请检查文件格式是否正确。错误: {e}")
+            return
+        
+        progress_bar.progress(25, text="📄 数据加载完成...")
+
+        analysis_input = {
+            "data": df,
+            "analysis_type": analysis_type,
+            "requirements": requirements,
+            "source": uploaded_file.name,
+            **trend_params # 合并趋势分析参数
+        }
+        progress_bar.progress(50, text="🤖 AI正在进行数据分析...")
+
+        analysis_result = await agent_coordinator.execute_agent("Analysis_Agent", analysis_input)
+        progress_bar.progress(100, text="✅ 分析完成！")
+        
+        if analysis_result.get("success", False):
+            display_analysis_results(analysis_result["result"])
+        else:
+            st.error(f"❌ 数据分析失败: {analysis_result.get('error', '未知错误')}")
+    except Exception as e:
+        st.error(f"❌ 数据分析处理失败: {str(e)}")
+        logger.error(f"数据分析处理失败: {e}", exc_info=True)
+
 def main():
-    st.title("🤖 智能文档问答系统")
+    st.title("🤖 智能文档分析系统")
     st.write("上传文档后，您可以用自然语言提问，AI助手将基于文档内容为您提供准确答案。")
     
     # 侧边栏 - Agent选择
@@ -401,7 +487,7 @@ def main():
     if not initialize_services():
         st.error("系统初始化失败，请检查配置")
         st.stop()
-    
+
     # 如果选择MCP智能体，初始化MCP服务
     mcp_agent = None
     if agent_type == "MCP智能助手":
@@ -409,70 +495,87 @@ def main():
         if mcp_agent is None:
             st.warning("MCP智能体初始化失败，将使用传统问答模式")
             agent_type = "传统问答"
+
+    tab1, tab2 = st.tabs(["🤖 智能文档问答", "📊 智能数据分析"])
     
-    # 主界面
-    st.markdown("### 📁 文档上传")
-    
-    # 获取支持的文件格式
-    file_config = get_config("file")
-    supported_formats = [fmt.lstrip('.') for fmt in file_config.get("supported_formats", ["pdf", "txt", "docx"])]
-    
-    uploaded_file = st.file_uploader(
-        "选择需要问答的文档",
-        type=supported_formats,
-        help="支持PDF、Word、文本等格式"
-    )
-    
-    if uploaded_file is not None:
-        # 文件信息
-        st.success(f"✅ 文档已加载: **{uploaded_file.name}**")
+    with tab1:
+        st.header("智能文档问答")
+
+        st.markdown("### 📁 文档上传")
         
-        col1, col2, col3 = st.columns(3)
-        with col1:
-            st.metric("文件大小", f"{uploaded_file.size:,} 字节")
-        with col2:
-            st.metric("文件类型", Path(uploaded_file.name).suffix.upper())
-        with col3:
-            st.metric("AI类型", "🧠 MCP智能" if agent_type == "MCP智能助手" else "⚡ 传统问答")
+        # 获取支持的文件格式
+        file_config = get_config("file")
+        supported_formats = [fmt.lstrip('.') for fmt in file_config.get("supported_formats", ["pdf", "txt", "docx"])]
         
-        st.markdown("---")
-        
-        # 问答区域
-        st.markdown("### 💭 智能问答")
-        
-        # 问题输入
-        question = st.text_area(
-            "请输入您的问题:",
-            height=100,
-            placeholder="例如：\n• 这个文档的核心观点是什么？\n• 提到了哪些解决方案？\n• 有哪些重要的统计数据？\n• 作者建议采取什么行动？",
-            help="用自然语言描述您想了解的内容"
+        uploaded_file = st.file_uploader(
+            "选择需要问答的文档",
+            type=supported_formats,
+            help="支持PDF、Word、文本等格式"
         )
         
-        # 高级选项
-        with st.expander("🔧 高级选项"):
-            col1, col2 = st.columns(2)
-            with col1:
-                answer_style = st.selectbox(
-                    "回答风格",
-                    ["detailed", "concise", "bullet_points"],
-                    format_func=lambda x: {
-                        "detailed": "📝 详细解释",
-                        "concise": "💡 简洁明了", 
-                        "bullet_points": "📋 要点列表"
-                    }[x]
-                )
-            with col2:
-                include_quotes = st.checkbox("📖 包含原文引用", value=True)
-                confidence_threshold = st.slider("置信度阈值", 0.3, 1.0, 0.7, 0.1)
+        if uploaded_file is not None:
+            # 文件信息
+            st.success(f"✅ 文档已加载: **{uploaded_file.name}**")
             
-            # MCP特定选项
-            if agent_type == "MCP智能助手":
-                st.markdown("**MCP高级设置**")
-                col3, col4 = st.columns(2)
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                st.metric("文件大小", f"{uploaded_file.size:,} 字节")
+            with col2:
+                st.metric("文件类型", Path(uploaded_file.name).suffix.upper())
+            with col3:
+                st.metric("AI类型", "🧠 MCP智能" if agent_type == "MCP智能助手" else "⚡ 传统问答")
+            
+            st.markdown("---")
+            
+            # 问答区域
+            st.markdown("### 💭 智能问答")
+            
+            # 问题输入
+            question = st.text_area(
+                "请输入您的问题:",
+                height=100,
+                placeholder="例如：\n• 这个文档的核心观点是什么？\n• 提到了哪些解决方案？\n• 有哪些重要的统计数据？\n• 作者建议采取什么行动？",
+                help="用自然语言描述您想了解的内容"
+            )
+            
+            # 高级选项
+            with st.expander("🔧 高级选项"):
+                col1, col2 = st.columns(2)
+                with col1:
+                    answer_style = st.selectbox(
+                        "回答风格",
+                        ["detailed", "concise", "bullet_points"],
+                        format_func=lambda x: {
+                            "detailed": "📝 详细解释",
+                            "concise": "💡 简洁明了", 
+                            "bullet_points": "📋 要点列表"
+                        }[x]
+                    )
+                with col2:
+                    include_quotes = st.checkbox("📖 包含原文引用", value=True)
+                    confidence_threshold = st.slider("置信度阈值", 0.3, 1.0, 0.7, 0.1)
+                
+                # 高级置信度评估开关（默认关闭以提升速度）
+                enable_advanced_confidence = st.checkbox("⚙️ 启用高级置信度评估（较慢）", value=False, help="开启后将调用额外一次模型对答案进行置信度打分，可能显著增加响应时间")
+                
+                # RAG 相关参数
+                use_rag = st.checkbox("启用RAG", value=True)
+                col3, col4, col5 = st.columns(3)
                 with col3:
-                    max_iterations = st.number_input("最大思考轮数", min_value=3, max_value=20, value=10)
+                    rag_top_k = st.slider("向量召回TopK", 4, 30, 12, 1)
                 with col4:
-                    show_thinking = st.checkbox("显示思考过程", value=True)
+                    use_reranker = st.checkbox("启用重排", value=True)
+                with col5:
+                    rag_rerank_top_n = st.slider("重排后片段数", 2, 12, 6, 1)
+                
+                # MCP特定选项
+                if agent_type == "MCP智能助手":
+                    st.markdown("**MCP高级设置**")
+                    col6, col7 = st.columns(2)
+                    with col6:
+                        max_iterations = st.number_input("最大思考轮数", min_value=3, max_value=20, value=10)
+                    with col7:
+                        show_thinking = st.checkbox("显示思考过程", value=True)
         
         # 问答按钮
         button_text = "🧠 开始深度分析" if agent_type == "MCP智能助手" else "🔍 开始问答"
@@ -494,41 +597,130 @@ def main():
                 # 传统问答处理流程
                 with st.spinner("🔄 AI正在分析文档并准备答案..."):
                     run_async_in_streamlit(
-                        process_document_qa(uploaded_file, question, answer_style, include_quotes, confidence_threshold)
+                        process_document_qa(
+                            uploaded_file,
+                            question,
+                            answer_style,
+                            include_quotes,
+                            confidence_threshold,
+                            enable_advanced_confidence,
+                            use_rag,
+                            use_reranker,
+                            rag_top_k,
+                            rag_rerank_top_n,
+                        )
                     )
                 
-    else:
-        # 上传提示
-        st.markdown("""
-        <div style="border: 2px dashed #ccc; border-radius: 10px; padding: 3rem; text-align: center; margin: 2rem 0;">
-            <h3 style="color: #666;">🤖 智能问答助手</h3>
-            <p style="color: #888;">上传文档后即可开始智能问答</p>
-            <p style="font-size: 0.9rem; color: #aaa;">支持复杂问题和多轮对话</p>
-        </div>
-        """, unsafe_allow_html=True)
+        else:
+            # 上传提示
+            st.markdown("""
+            <div style="border: 2px dashed #ccc; border-radius: 10px; padding: 3rem; text-align: center; margin: 2rem 0;">
+                <h3 style="color: #666;">🤖 智能问答助手</h3>
+                <p style="color: #888;">上传文档后即可开始智能问答</p>
+                <p style="font-size: 0.9rem; color: #aaa;">支持复杂问题和多轮对话</p>
+            </div>
+            """, unsafe_allow_html=True)
+            
+            # Agent类型说明
+            if agent_type == "MCP智能助手":
+                st.markdown("#### 🧠 MCP智能助手特性")
+                st.info("""
+                **MCP智能助手具备以下能力：**
+                - 🤔 **深度思考**：多轮分析推理过程
+                - 🔧 **工具调用**：自动使用文档分析、搜索等工具
+                - 📊 **过程透明**：实时显示思考和执行过程
+                - 🎯 **智能决策**：根据问题复杂度自动选择处理策略
+                """)
+            
+            # 问答示例
+            st.markdown("#### 💡 问答示例")
+            examples = [
+                "这个文档的主要内容是什么？",
+                "文档中提到了哪些重要数据？",
+                "作者的主要观点和结论是什么？", 
+                "有什么重要的建议或推荐？"
+            ]
+            
+            for example in examples:
+                st.info(f"**问题示例**: {example}")
+
+    with tab2:
+        st.header("智能数据分析")
+    
+        st.markdown("### 📁 文档上传")
         
-        # Agent类型说明
-        if agent_type == "MCP智能助手":
-            st.markdown("#### 🧠 MCP智能助手特性")
-            st.info("""
-            **MCP智能助手具备以下能力：**
-            - 🤔 **深度思考**：多轮分析推理过程
-            - 🔧 **工具调用**：自动使用文档分析、搜索等工具
-            - 📊 **过程透明**：实时显示思考和执行过程
-            - 🎯 **智能决策**：根据问题复杂度自动选择处理策略
-            """)
-        
-        # 问答示例
-        st.markdown("#### 💡 问答示例")
-        examples = [
-            "这个文档的主要内容是什么？",
-            "文档中提到了哪些重要数据？",
-            "作者的主要观点和结论是什么？", 
-            "有什么重要的建议或推荐？"
-        ]
-        
-        for example in examples:
-            st.info(f"**问题示例**: {example}")
+        data_uploader = st.file_uploader(
+            "上传您的数据文件", 
+            type=["xlsx", "xls"],
+            key="data_uploader"
+        )
+
+        if data_uploader:
+            st.success(f"✅ 文件已加载: **{data_uploader.name}**")
+            
+            try:
+                # seek(0) 确保文件指针在开头，可以被多次读取
+                data_uploader.seek(0)
+                temp_df = pd.read_excel(data_uploader)
+                all_columns = temp_df.columns.tolist()
+                numeric_columns = temp_df.select_dtypes(include=['number']).columns.tolist()
+            except Exception as e:
+                st.error(f"读取列名失败: {e}")
+                st.stop()
+            
+            analysis_type = st.selectbox(
+                "选择分析类型",
+                ["comprehensive", "statistical", "correlation", "trend"],
+                format_func=lambda x: {"comprehensive": "📈 综合分析", "statistical": "📊 描述性统计",
+                                    "correlation": "🔗 相关性分析", "trend": "📉 趋势分析"}[x],
+                key="analysis_type"
+            )
+
+            trend_params = {}
+            if analysis_type == 'trend':
+                st.info("请选择用于趋势分析的数值列和可选的时间列。")
+                col1, col2 = st.columns(2)
+                with col1:
+                    trend_params["trend_target_col"] = st.selectbox(
+                        "选择要分析的数值列", options=numeric_columns, index=0 if numeric_columns else None
+                    )
+                with col2:
+                    trend_params["trend_time_col"] = st.selectbox(
+                        "选择时间/日期列 (可选)", options=[None] + all_columns
+                    )
+
+            requirements = st.text_area(
+                "请输入您的具体分析要求 (可选)", height=100,
+                placeholder="例如：\n• 帮我分析销售额和广告投入的关系。\n• 找出哪些产品的利润率最高。",
+                key="analysis_reqs"
+            )
+
+            if st.button("🚀 开始分析", type="primary", use_container_width=True, key="analysis_button"):
+                with st.spinner("🔄 AI正在进行数据分析..."):
+                    run_async_in_streamlit(
+                        process_data_analysis(data_uploader, analysis_type, requirements, trend_params)
+                    )
+
+        else:
+            # 上传提示
+            st.markdown("""
+            <div style="border: 2px dashed #ccc; border-radius: 10px; padding: 3rem; text-align: center; margin: 2rem 0;">
+                <h3 style="color: #666;">📊 智能数据分析</h3>
+                <p style="color: #888;">上传文档后即可开始智能数据分析</p>
+                <p style="font-size: 0.9rem; color: #aaa;">支持复杂问题和多轮对话</p>
+            </div>
+            """, unsafe_allow_html=True)
+            
+            # 问答示例
+            st.markdown("#### 💡 数据分析示例")
+            examples = [
+                "帮我分析销售额和广告投入的关系。",
+                "找出哪些产品的利润率最高。",
+                "预测下个季度的用户增长趋势。", 
+            ]
+            
+            for example in examples:
+                st.info(f"**数据分析示例**: {example}")
 
 if __name__ == "__main__":
     main()

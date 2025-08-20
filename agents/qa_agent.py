@@ -34,6 +34,7 @@ class QAAgent(BaseAgent):
         document_content = input_data.get("document_content", "")
         question = input_data.get("question", "")
         document_type = input_data.get("document_type", "unknown")
+        enable_advanced_confidence = bool(input_data.get("enable_advanced_confidence", False))
         
         if not document_content:
             raise ValueError("文档内容不能为空")
@@ -57,10 +58,13 @@ class QAAgent(BaseAgent):
             prompt = self._build_qa_prompt(truncated_content, question, document_type)
             
             # 获取LLM响应
-            answer = await self._get_llm_response(prompt, max_tokens=4096)
-            
-            # 分析答案置信度
-            confidence = await self._analyze_confidence(question, document_content, answer)
+            answer = await self._get_llm_response(prompt, max_tokens=1500)
+
+            # 分析答案置信度（按开关决定是否进行高级评估）
+            if enable_advanced_confidence:
+                confidence = await self._analyze_confidence(question, document_content, answer)
+            else:
+                confidence = self._simple_confidence_analysis(question, document_content, answer)
             
             # 提取相关段落
             relevant_passages = self._extract_relevant_passages(document_content, question)

@@ -1,6 +1,5 @@
-from typing import Dict, Any, List, Optional, Union
+from typing import Dict, Any, List, Optional
 import logging
-import json
 import pandas as pd
 from .base_agent import BaseAgent
 from config.settings import get_prompt_template
@@ -14,15 +13,16 @@ class AnalysisAgent(BaseAgent):
     def __init__(self):
         super().__init__(
             name="Analysis_Agent",
-            description="对提取的数据进行专业分析的智能体"
+            description="对提取的数据进行专业分析并生成可视化图表的智能体"
         )
         self.add_capability("data_analysis")
         self.add_capability("statistical_analysis")
         self.add_capability("trend_analysis")
         self.add_capability("correlation_analysis")
+        self.add_capability("data_visualization") 
         self.max_context_length = 8000
-        self.temperature = 0.3  # 分析需要更准确，温度较低
-    
+        self.temperature = 0.3
+
     async def process(self, input_data: Any, context: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         """处理数据分析请求"""
         if not isinstance(input_data, dict):
@@ -32,57 +32,52 @@ class AnalysisAgent(BaseAgent):
         analysis_type = input_data.get("analysis_type", "comprehensive")
         requirements = input_data.get("requirements", "")
         data_source = input_data.get("source", "unknown")
+        # 用于趋势分析的特定列
+        trend_target_col = input_data.get("trend_target_col")
+        trend_time_col = input_data.get("trend_time_col")
         
         if data is None:
             raise ValueError("数据不能为空")
-        
-        # 记录分析开始
-        self.add_memory({
-            "type": "analysis_start",
-            "analysis_type": analysis_type,
-            "data_source": data_source,
-            "requirements": requirements
-        })
+            
+        self.add_memory({"type": "analysis_start", "analysis_type": analysis_type})
         
         try:
-            # 初始化数据处理器
             processor = DataProcessor()
             processor.load_data(data, source=data_source)
-            
-            # 数据清理
             processor.clean_data()
             
-            # 初始化分析器
             analyzer = DataAnalyzer(processor)
-            
-            # 执行不同类型的分析
+            visualizer = DataVisualizer(processor.data) # 初始化可视化工具
+
             analysis_results = {}
-            
+            visualizations = {} # 用于存放生成的图表
+
+            # 1. 描述性统计
             if analysis_type in ["comprehensive", "statistical"]:
                 analysis_results["descriptive"] = analyzer.descriptive_analysis()
-            
+                dist_cols = visualizer.get_plottable_columns('numeric', 3)
+                for col in dist_cols:
+                    visualizations[f"dist_{col}"] = visualizer.generate_distribution_chart(col)
+
+            # 2. 相关性分析
             if analysis_type in ["comprehensive", "correlation"]:
                 analysis_results["correlation"] = analyzer.correlation_analysis()
-            
-            if analysis_type in ["comprehensive", "trend"]:
-                # 尝试趋势分析
-                numeric_columns = processor.data.select_dtypes(include=['number']).columns
-                if len(numeric_columns) > 0:
-                    first_numeric_col = numeric_columns[0]
-                    analysis_results["trend"] = analyzer.trend_analysis(first_numeric_col)
-            
-            # 获取数据摘要
+                visualizations["correlation_heatmap"] = visualizer.generate_correlation_heatmap()
+
+            # 3. 趋势分析 
+            if analysis_type in ["comprehensive", "trend"] and trend_target_col:
+                analysis_results["trend"] = analyzer.trend_analysis(
+                    target_column=trend_target_col, 
+                    time_column=trend_time_col
+                )
+                visualizations["trend_chart"] = visualizer.generate_trend_chart(
+                    target_column=trend_target_col, 
+                    time_column=trend_time_col
+                )
+
             data_summary = processor.get_summary()
             
-            # 生成AI分析洞察
-            ai_insights = await self._generate_ai_insights(
-                data_summary, analysis_results, requirements
-            )
-            
-            # 生成可视化建议
-            visualization_suggestions = self._generate_visualization_suggestions(
-                processor.data, analysis_results
-            )
+            ai_insights = await self._generate_ai_insights(data_summary, analysis_results, requirements)
             
             result = {
                 "analysis_type": analysis_type,
@@ -90,29 +85,18 @@ class AnalysisAgent(BaseAgent):
                 "data_summary": data_summary,
                 "statistical_analysis": analysis_results,
                 "ai_insights": ai_insights,
-                "visualization_suggestions": visualization_suggestions,
+                "visualizations": visualizations, # 返回真实的图表对象
                 "recommendations": await self._generate_recommendations(analysis_results, ai_insights)
             }
             
-            # 记录成功分析
-            self.add_memory({
-                "type": "analysis_success",
-                "analysis_type": analysis_type,
-                "insights_length": len(ai_insights),
-                "recommendations_count": len(result["recommendations"])
-            })
-            
+            self.add_memory({"type": "analysis_success", "insights_length": len(ai_insights)})
             return result
             
         except Exception as e:
-            logger.error(f"数据分析失败: {e}")
-            self.add_memory({
-                "type": "analysis_error",
-                "analysis_type": analysis_type,
-                "error": str(e)
-            })
+            logger.error(f"数据分析失败: {e}", exc_info=True)
+            self.add_memory({"type": "analysis_error", "error": str(e)})
             raise
-    
+
     async def _generate_ai_insights(self, data_summary: Dict[str, Any], 
                                   analysis_results: Dict[str, Any], 
                                   requirements: str) -> str:
@@ -239,65 +223,7 @@ class AnalysisAgent(BaseAgent):
         except Exception as e:
             logger.error(f"分析结果格式化失败: {e}")
             return str(analysis_results)
-    
-    def _generate_visualization_suggestions(self, data: pd.DataFrame, 
-                                          analysis_results: Dict[str, Any]) -> List[Dict[str, str]]:
-        """生成可视化建议"""
-        suggestions = []
-        
-        try:
-            numeric_columns = data.select_dtypes(include=['number']).columns.tolist()
-            categorical_columns = data.select_dtypes(include=['object']).columns.tolist()
-            
-            # 单变量可视化
-            if numeric_columns:
-                suggestions.append({
-                    "type": "histogram",
-                    "title": "数值分布直方图",
-                    "description": f"显示 {numeric_columns[0]} 的分布情况",
-                    "columns": [numeric_columns[0]]
-                })
-                
-                suggestions.append({
-                    "type": "box_plot",
-                    "title": "数值分布箱线图",
-                    "description": "显示数值的分位数和异常值",
-                    "columns": numeric_columns[:3]
-                })
-            
-            # 双变量可视化
-            if len(numeric_columns) >= 2:
-                suggestions.append({
-                    "type": "scatter_plot",
-                    "title": "散点图分析",
-                    "description": f"分析 {numeric_columns[0]} 和 {numeric_columns[1]} 的关系",
-                    "columns": numeric_columns[:2]
-                })
-            
-            # 时间序列可视化
-            date_columns = data.select_dtypes(include=['datetime']).columns.tolist()
-            if date_columns and numeric_columns:
-                suggestions.append({
-                    "type": "line_chart",
-                    "title": "时间序列趋势图",
-                    "description": f"显示 {numeric_columns[0]} 随时间变化的趋势",
-                    "columns": [date_columns[0], numeric_columns[0]]
-                })
-            
-            # 相关性热力图
-            if len(numeric_columns) >= 2:
-                suggestions.append({
-                    "type": "correlation_heatmap",
-                    "title": "相关性热力图",
-                    "description": "显示数值变量之间的相关性",
-                    "columns": numeric_columns
-                })
-            
-        except Exception as e:
-            logger.error(f"可视化建议生成失败: {e}")
-        
-        return suggestions
-    
+
     async def _generate_recommendations(self, analysis_results: Dict[str, Any], 
                                       ai_insights: str) -> List[str]:
         """生成建议和推荐"""

@@ -248,6 +248,21 @@ ANALYSIS_CONFIG = {
     "output_formats": ["png", "pdf", "svg", "html"],
 }
 
+RAG_CONFIG = {
+    "enabled": True,
+    # 嵌入与重排模型（BAAI 推荐）
+    "embedding_model": os.getenv("RAG_EMBEDDING_MODEL", "BAAI/bge-m3"),
+    "reranker_model": os.getenv("RAG_RERANKER_MODEL", "BAAI/bge-reranker-base"),
+    # 切分
+    "chunk_size": int(os.getenv("RAG_CHUNK_SIZE", "800")),
+    "chunk_overlap": int(os.getenv("RAG_CHUNK_OVERLAP", "100")),
+    # 检索参数
+    "top_k": int(os.getenv("RAG_TOP_K", "8")),
+    "candidate_k": int(os.getenv("RAG_CANDIDATE_K", "20")),
+    # 索引存储
+    "index_dir": os.getenv("RAG_INDEX_DIR", "outputs/index"),
+}
+
 def get_config(section: str) -> Dict[str, Any]:
     """获取指定配置段"""
     config_map = {
@@ -268,6 +283,7 @@ def get_config(section: str) -> Dict[str, Any]:
         "agent": AGENT_CONFIG,
         "workflow": WORKFLOW_CONFIG,
         "analysis": ANALYSIS_CONFIG,
+        "rag": RAG_CONFIG,
     }
     return config_map.get(section, {})
 
