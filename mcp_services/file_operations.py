@@ -25,214 +25,219 @@ class FileOperationsService(BaseMCPService):
     async def initialize(self) -> bool:
         """初始化服务"""
         try:
-            # 注册方法（使用 register_method 而不是 register_tool）
-            self.register_method("read_file", self._read_file)
-            self.register_method("write_file", self._write_file)
-            self.register_method("delete_file", self._delete_file)
-            self.register_method("list_files", self._list_files)
-            self.register_method("copy_file", self._copy_file)
-            self.register_method("move_file", self._move_file)
-            self.register_method("create_directory", self._create_directory)
-            self.register_method("get_file_info", self._get_file_info)
+            # 注册工具
+            self.register_tool(
+                name="read_file",
+                description="读取文件内容",
+                handler=self._read_file,
+                schema={
+                    "type": "object",
+                    "properties": {
+                        "file_path": {
+                            "type": "string",
+                            "description": "文件路径"
+                        },
+                        "encoding": {
+                            "type": "string",
+                            "description": "文件编码",
+                            "default": "utf-8"
+                        }
+                    },
+                    "required": ["file_path"]
+                }
+            )
+            
+            self.register_tool(
+                name="write_file",
+                description="写入文件内容",
+                handler=self._write_file,
+                schema={
+                    "type": "object",
+                    "properties": {
+                        "file_path": {
+                            "type": "string",
+                            "description": "文件路径"
+                        },
+                        "content": {
+                            "type": "string",
+                            "description": "文件内容"
+                        },
+                        "encoding": {
+                            "type": "string",
+                            "description": "文件编码",
+                            "default": "utf-8"
+                        },
+                        "overwrite": {
+                            "type": "boolean",
+                            "description": "是否覆盖已存在的文件",
+                            "default": False
+                        }
+                    },
+                    "required": ["file_path", "content"]
+                }
+            )
+            
+            self.register_tool(
+                name="copy_file",
+                description="复制文件",
+                handler=self._copy_file,
+                schema={
+                    "type": "object",
+                    "properties": {
+                        "source_path": {
+                            "type": "string",
+                            "description": "源文件路径"
+                        },
+                        "destination_path": {
+                            "type": "string",
+                            "description": "目标文件路径"
+                        },
+                        "overwrite": {
+                            "type": "boolean",
+                            "description": "是否覆盖已存在的文件",
+                            "default": False
+                        }
+                    },
+                    "required": ["source_path", "destination_path"]
+                }
+            )
+            
+            self.register_tool(
+                name="move_file",
+                description="移动文件",
+                handler=self._move_file,
+                schema={
+                    "type": "object",
+                    "properties": {
+                        "source_path": {
+                            "type": "string",
+                            "description": "源文件路径"
+                        },
+                        "destination_path": {
+                            "type": "string",
+                            "description": "目标文件路径"
+                        },
+                        "overwrite": {
+                            "type": "boolean",
+                            "description": "是否覆盖已存在的文件",
+                            "default": False
+                        }
+                    },
+                    "required": ["source_path", "destination_path"]
+                }
+            )
+            
+            self.register_tool(
+                name="delete_file",
+                description="删除文件",
+                handler=self._delete_file,
+                schema={
+                    "type": "object",
+                    "properties": {
+                        "file_path": {
+                            "type": "string",
+                            "description": "文件路径"
+                        },
+                        "safe": {
+                            "type": "boolean",
+                            "description": "安全删除（忽略不存在的文件）",
+                            "default": True
+                        }
+                    },
+                    "required": ["file_path"]
+                }
+            )
+            
+            self.register_tool(
+                name="list_directory",
+                description="列出目录内容",
+                handler=self._list_directory,
+                schema={
+                    "type": "object",
+                    "properties": {
+                        "directory_path": {
+                            "type": "string",
+                            "description": "目录路径"
+                        },
+                        "pattern": {
+                            "type": "string",
+                            "description": "文件模式匹配",
+                            "default": "*"
+                        },
+                        "recursive": {
+                            "type": "boolean",
+                            "description": "是否递归列出",
+                            "default": False
+                        }
+                    },
+                    "required": ["directory_path"]
+                }
+            )
+            
+            self.register_tool(
+                name="get_file_info",
+                description="获取文件信息",
+                handler=self._get_file_info,
+                schema={
+                    "type": "object",
+                    "properties": {
+                        "file_path": {
+                            "type": "string",
+                            "description": "文件路径"
+                        }
+                    },
+                    "required": ["file_path"]
+                }
+            )
+            
+            self.register_tool(
+                name="create_directory",
+                description="创建目录",
+                handler=self._create_directory,
+                schema={
+                    "type": "object",
+                    "properties": {
+                        "directory_path": {
+                            "type": "string",
+                            "description": "目录路径"
+                        },
+                        "parents": {
+                            "type": "boolean",
+                            "description": "创建父目录",
+                            "default": True
+                        }
+                    },
+                    "required": ["directory_path"]
+                }
+            )
+            
+            # 注册资源
+            self.register_resource(
+                uri="file://temp_directory",
+                name="临时目录",
+                description="临时文件存储目录",
+                mime_type="inode/directory"
+            )
+            
+            self.register_resource(
+                uri="file://upload_directory",
+                name="上传目录",
+                description="文件上传目录",
+                mime_type="inode/directory"
+            )
+            
+            self.register_resource(
+                uri="file://output_directory",
+                name="输出目录",
+                description="文件输出目录",
+                mime_type="inode/directory"
+            )
             
             logger.info("文件操作服务初始化完成")
             return True
         except Exception as e:
             logger.error(f"文件操作服务初始化失败: {e}")
             return False
-            description="写入文件内容",
-            handler=self._write_file,
-            schema={
-                "type": "object",
-                "properties": {
-                    "file_path": {
-                        "type": "string",
-                        "description": "文件路径"
-                    },
-                    "content": {
-                        "type": "string",
-                        "description": "文件内容"
-                    },
-                    "encoding": {
-                        "type": "string",
-                        "description": "文件编码",
-                        "default": "utf-8"
-                    },
-                    "overwrite": {
-                        "type": "boolean",
-                        "description": "是否覆盖已存在的文件",
-                        "default": False
-                    }
-                },
-                "required": ["file_path", "content"]
-            }
-        )
-        
-        self.register_tool(
-            name="copy_file",
-            description="复制文件",
-            handler=self._copy_file,
-            schema={
-                "type": "object",
-                "properties": {
-                    "source_path": {
-                        "type": "string",
-                        "description": "源文件路径"
-                    },
-                    "destination_path": {
-                        "type": "string",
-                        "description": "目标文件路径"
-                    },
-                    "overwrite": {
-                        "type": "boolean",
-                        "description": "是否覆盖已存在的文件",
-                        "default": False
-                    }
-                },
-                "required": ["source_path", "destination_path"]
-            }
-        )
-        
-        self.register_tool(
-            name="move_file",
-            description="移动文件",
-            handler=self._move_file,
-            schema={
-                "type": "object",
-                "properties": {
-                    "source_path": {
-                        "type": "string",
-                        "description": "源文件路径"
-                    },
-                    "destination_path": {
-                        "type": "string",
-                        "description": "目标文件路径"
-                    },
-                    "overwrite": {
-                        "type": "boolean",
-                        "description": "是否覆盖已存在的文件",
-                        "default": False
-                    }
-                },
-                "required": ["source_path", "destination_path"]
-            }
-        )
-        
-        self.register_tool(
-            name="delete_file",
-            description="删除文件",
-            handler=self._delete_file,
-            schema={
-                "type": "object",
-                "properties": {
-                    "file_path": {
-                        "type": "string",
-                        "description": "文件路径"
-                    },
-                    "safe": {
-                        "type": "boolean",
-                        "description": "安全删除（忽略不存在的文件）",
-                        "default": True
-                    }
-                },
-                "required": ["file_path"]
-            }
-        )
-        
-        self.register_tool(
-            name="list_directory",
-            description="列出目录内容",
-            handler=self._list_directory,
-            schema={
-                "type": "object",
-                "properties": {
-                    "directory_path": {
-                        "type": "string",
-                        "description": "目录路径"
-                    },
-                    "pattern": {
-                        "type": "string",
-                        "description": "文件模式匹配",
-                        "default": "*"
-                    },
-                    "recursive": {
-                        "type": "boolean",
-                        "description": "是否递归列出",
-                        "default": False
-                    }
-                },
-                "required": ["directory_path"]
-            }
-        )
-        
-        self.register_tool(
-            name="get_file_info",
-            description="获取文件信息",
-            handler=self._get_file_info,
-            schema={
-                "type": "object",
-                "properties": {
-                    "file_path": {
-                        "type": "string",
-                        "description": "文件路径"
-                    }
-                },
-                "required": ["file_path"]
-            }
-        )
-        
-        self.register_tool(
-            name="create_directory",
-            description="创建目录",
-            handler=self._create_directory,
-            schema={
-                "type": "object",
-                "properties": {
-                    "directory_path": {
-                        "type": "string",
-                        "description": "目录路径"
-                    },
-                    "parents": {
-                        "type": "boolean",
-                        "description": "创建父目录",
-                        "default": True
-                    }
-                },
-                "required": ["directory_path"]
-            }
-        )
-        
-        # 注册资源
-        self.register_resource(
-            uri="file://temp_directory",
-            name="临时目录",
-            description="临时文件存储目录",
-            mime_type="inode/directory"
-        )
-        
-        self.register_resource(
-            uri="file://upload_directory",
-            name="上传目录",
-            description="文件上传目录",
-            mime_type="inode/directory"
-        )
-        
-        self.register_resource(
-            uri="file://output_directory",
-            name="输出目录",
-            description="文件输出目录",
-            mime_type="inode/directory"
-        )
-        
-        return {
-            "service": self.service_name,
-            "status": "initialized",
-            "directories": {
-                "temp": str(self.temp_dir.absolute()),
-                "upload": str(self.upload_dir.absolute()),
-                "output": str(self.output_dir.absolute())
-            }
-        }
     
     async def handle_request(self, request: MCPRequest) -> MCPResponse:
         """处理请求"""
@@ -317,7 +322,8 @@ class FileOperationsService(BaseMCPService):
         path = Path(file_path)
         
         # 检查是否覆盖
-        if path.exists() and not overwrite:
+        file_existed = path.exists()
+        if file_existed and not overwrite:
             raise FileExistsError(f"文件已存在且不允许覆盖: {file_path}")
         
         # 确保父目录存在
@@ -331,7 +337,7 @@ class FileOperationsService(BaseMCPService):
                 "file_path": str(path.absolute()),
                 "bytes_written": len(content.encode(encoding)),
                 "encoding": encoding,
-                "created": not path.existed_before_write if hasattr(path, 'existed_before_write') else True
+                "created": not file_existed
             }
         except Exception as e:
             raise Exception(f"写入文件失败: {e}")
