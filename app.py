@@ -229,7 +229,8 @@ def display_qa_results(result: Dict[str, Any]):
         with col2:
             st.metric("回答长度", f"{result.get('answer_length', 0):,} 字符")
 
-async def process_document_qa(uploaded_file, question, answer_style="detailed", include_quotes=True, confidence_threshold=0.7):
+async def process_document_qa(uploaded_file, question, answer_style="detailed", include_quotes=True, confidence_threshold=0.7,
+                            enable_advanced_confidence=False, use_rag=True, use_reranker=True, rag_top_k=12, rag_rerank_top_n=6):
     """处理文档问答"""
     try:
         # 进度指示
@@ -257,16 +258,54 @@ async def process_document_qa(uploaded_file, question, answer_style="detailed", 
         if parse_result.get("result", {}).get("success", False):
             text_content = parse_result["result"]["result"]["text_content"]
             
+            # RAG处理
+            context_text = text_content
+            if use_rag and text_content:
+                try:
+                    progress_bar.progress(60, text="🔍 构建RAG索引...")
+                    
+                    # 计算文件ID
+                    file_id = compute_file_id(str(file_path))
+                    
+                    # 构建或加载索引
+                    store, embedder, reranker = build_or_load_index(file_id, text_content)
+                    
+                    progress_bar.progress(70, text="🔍 RAG检索相关内容...")
+                    
+                    # 检索相关片段
+                    chunks = retrieve_with_optional_rerank(
+                        query=question,
+                        store=store,
+                        embedder=embedder,
+                        top_k=rag_top_k,
+                        rerank_top_n=rag_rerank_top_n,
+                        use_reranker=use_reranker
+                    )
+                    
+                    if chunks:
+                        # 构建上下文
+                        context_text = build_context_from_chunks(chunks)
+                        logger.info(f"RAG检索到{len(chunks)}个相关片段")
+                    else:
+                        logger.warning("RAG未检索到相关片段，使用原始文本")
+                        
+                except Exception as e:
+                    logger.error(f"RAG处理失败，使用原始文本: {e}")
+                    # RAG失败时回退到原始文本
+                    context_text = text_content
+            
             progress_bar.progress(75, text="🤖 AI正在思考答案...")
             
             # 执行问答
             qa_input = {
-                "document_content": text_content,
+                "document_content": context_text,
                 "question": question,
                 "document_type": Path(uploaded_file.name).suffix,
                 "answer_style": answer_style,
                 "include_quotes": include_quotes,
-                "confidence_threshold": confidence_threshold
+                "confidence_threshold": confidence_threshold,
+                "use_rag": use_rag,
+                "rag_chunks_count": len(chunks) if use_rag and 'chunks' in locals() else 0
             }
             
             qa_result = await agent_coordinator.execute_agent(
@@ -291,7 +330,8 @@ async def process_document_qa(uploaded_file, question, answer_style="detailed", 
         logger.error(f"问答处理失败: {e}")
 
 async def process_mcp_qa(uploaded_file, question, mcp_agent, answer_style="detailed", 
-                        include_quotes=True, confidence_threshold=0.7, max_iterations=10, show_thinking=True):
+                        include_quotes=True, confidence_threshold=0.7, max_iterations=10, show_thinking=True,
+                        use_rag=True, use_reranker=True, rag_top_k=12, rag_rerank_top_n=6):
     """使用MCP智能体处理文档问答"""
     try:
         # 进度指示
@@ -321,6 +361,48 @@ async def process_mcp_qa(uploaded_file, question, mcp_agent, answer_style="detai
         if parse_result.get("result", {}).get("success", False):
             text_content = parse_result["result"]["result"]["text_content"]
             
+            # RAG处理
+            context_text = text_content
+            rag_chunks_info = {"enabled": False, "chunks_count": 0}
+            
+            if use_rag and text_content:
+                try:
+                    status_manager.update_step("thinking", "构建RAG索引...")
+                    
+                    # 计算文件ID
+                    file_id = compute_file_id(str(file_path))
+                    
+                    # 构建或加载索引
+                    store, embedder, reranker = build_or_load_index(file_id, text_content)
+                    
+                    status_manager.update_step("thinking", "RAG检索相关内容...")
+                    
+                    # 检索相关片段
+                    chunks = retrieve_with_optional_rerank(
+                        query=question,
+                        store=store,
+                        embedder=embedder,
+                        top_k=rag_top_k,
+                        rerank_top_n=rag_rerank_top_n,
+                        use_reranker=use_reranker
+                    )
+                    
+                    if chunks:
+                        # 构建上下文
+                        context_text = build_context_from_chunks(chunks)
+                        rag_chunks_info = {"enabled": True, "chunks_count": len(chunks)}
+                        logger.info(f"RAG检索到{len(chunks)}个相关片段")
+                        status_manager.update_step("thinking", f"RAG检索完成，获得{len(chunks)}个相关片段")
+                    else:
+                        logger.warning("RAG未检索到相关片段，使用原始文本")
+                        status_manager.update_step("thinking", "RAG未检索到相关片段，使用原始文档")
+                        
+                except Exception as e:
+                    logger.error(f"RAG处理失败，使用原始文本: {e}")
+                    status_manager.update_step("thinking", f"RAG处理失败，回退到原始文档: {str(e)}")
+                    # RAG失败时回退到原始文本
+                    context_text = text_content
+            
             status_manager.update_step("thinking", "文档解析完成，启动MCP智能体...")
             
             # 设置智能体参数
@@ -329,12 +411,13 @@ async def process_mcp_qa(uploaded_file, question, mcp_agent, answer_style="detai
             # 准备输入数据
             qa_input = {
                 "question": question,
-                "document_content": text_content,
+                "document_content": context_text,
                 "document_type": Path(uploaded_file.name).suffix,
                 "document_file_path": str(file_path),
                 "answer_style": answer_style,
                 "include_quotes": include_quotes,
-                "confidence_threshold": confidence_threshold
+                "confidence_threshold": confidence_threshold,
+                "rag_info": rag_chunks_info
             }
             
             # 创建流式聊天界面
@@ -356,10 +439,14 @@ async def process_mcp_qa(uploaded_file, question, mcp_agent, answer_style="detai
                     else:
                         logger.info(f"智能体已初始化，{len(mcp_agent.available_tools)}个工具可用")
                     
+                    # 在聊天界面显示RAG信息
+                    if rag_chunks_info["enabled"]:
+                        st.info(f"🔍 RAG已激活，检索到 {rag_chunks_info['chunks_count']} 个相关文档片段")
+                    
                     # 创建异步生成器
                     thought_generator = mcp_agent.think_and_act(
                         question,
-                        text_content,
+                        context_text,  # 使用RAG处理后的内容
                         Path(uploaded_file.name).suffix,
                         str(file_path)
                     )
@@ -390,6 +477,10 @@ async def process_mcp_qa(uploaded_file, question, mcp_agent, answer_style="detai
             else:
                 # 不显示思考过程，直接处理
                 with st.spinner("🧠 MCP智能体正在深度思考..."):
+                    # 在简化模式下也显示RAG信息
+                    if rag_chunks_info["enabled"]:
+                        st.info(f"🔍 RAG已激活，检索到 {rag_chunks_info['chunks_count']} 个相关文档片段")
+                    
                     result = await mcp_agent.process(qa_input)
                     
                     if result.get("answer"):
@@ -419,7 +510,8 @@ async def process_mcp_qa(uploaded_file, question, mcp_agent, answer_style="detai
             status_manager.complete_conversation(False)
 
 async def process_mcp_data_analysis(uploaded_file, analysis_requirements, mcp_agent, 
-                                   max_iterations=10, show_thinking=True, confidence_threshold=0.7):
+                                   max_iterations=10, show_thinking=True, confidence_threshold=0.7,
+                                   use_rag=True, use_reranker=True, rag_top_k=12, rag_rerank_top_n=6):
     """使用MCP智能体处理数据分析"""
     try:
         # 进度指示
@@ -444,11 +536,73 @@ async def process_mcp_data_analysis(uploaded_file, analysis_requirements, mcp_ag
         try:
             df = pd.read_excel(file_path)
             data_json = df.to_json(orient='records', date_format='iso')
-            status_manager.update_step("thinking", f"数据解析完成，{df.shape[0]}行{df.shape[1]}列，开始MCP智能体分析...")
+            
+            # 为数据分析创建可读的文本表示
+            data_summary = f"""
+数据概览:
+- 总行数: {df.shape[0]}
+- 总列数: {df.shape[1]}
+- 列名: {', '.join(df.columns.tolist())}
+
+数据样本 (前5行):
+{df.head().to_string()}
+
+数据统计信息:
+{df.describe().to_string()}
+"""
+            
+            status_manager.update_step("thinking", f"数据解析完成，{df.shape[0]}行{df.shape[1]}列")
+            
         except Exception as e:
             st.error(f"❌ 数据解析失败: {str(e)}")
             status_manager.complete_conversation(False)
             return
+        
+        # RAG处理 - 对于数据分析，我们可以对数据摘要和分析需求进行RAG处理
+        context_text = data_json
+        rag_chunks_info = {"enabled": False, "chunks_count": 0}
+        
+        if use_rag and len(data_summary) > 1000:  # 只有当数据摘要足够长时才使用RAG
+            try:
+                status_manager.update_step("thinking", "构建数据RAG索引...")
+                
+                # 计算文件ID
+                file_id = compute_file_id(str(file_path) + "_data_analysis")
+                
+                # 使用数据摘要构建索引
+                store, embedder, reranker = build_or_load_index(file_id, data_summary)
+                
+                status_manager.update_step("thinking", "RAG检索相关数据信息...")
+                
+                # 检索相关片段
+                chunks = retrieve_with_optional_rerank(
+                    query=analysis_requirements,
+                    store=store,
+                    embedder=embedder,
+                    top_k=rag_top_k,
+                    rerank_top_n=rag_rerank_top_n,
+                    use_reranker=use_reranker
+                )
+                
+                if chunks:
+                    # 构建上下文，但仍保留原始JSON数据
+                    context_summary = build_context_from_chunks(chunks)
+                    # 合并RAG检索的上下文和原始数据
+                    context_text = f"数据上下文:\n{context_summary}\n\n原始数据:\n{data_json}"
+                    rag_chunks_info = {"enabled": True, "chunks_count": len(chunks)}
+                    logger.info(f"数据分析RAG检索到{len(chunks)}个相关片段")
+                    status_manager.update_step("thinking", f"RAG检索完成，获得{len(chunks)}个相关数据片段")
+                else:
+                    logger.warning("数据分析RAG未检索到相关片段，使用原始数据")
+                    status_manager.update_step("thinking", "RAG未检索到相关片段，使用原始数据")
+                    
+            except Exception as e:
+                logger.error(f"数据分析RAG处理失败，使用原始数据: {e}")
+                status_manager.update_step("thinking", f"RAG处理失败，回退到原始数据: {str(e)}")
+                # RAG失败时回退到原始数据
+                context_text = data_json
+        
+        status_manager.update_step("thinking", "开始MCP智能体分析...")
         
         # 设置智能体参数
         mcp_agent.max_iterations = max_iterations
@@ -472,10 +626,15 @@ async def process_mcp_data_analysis(uploaded_file, analysis_requirements, mcp_ag
                 else:
                     logger.info(f"智能体已初始化，{len(mcp_agent.available_tools)}个工具可用")
                 
-                # 创建异步生成器 - 使用数据JSON作为document_content
+                # 在聊天界面显示数据和RAG信息
+                st.info(f"📊 数据已加载: {df.shape[0]}行 × {df.shape[1]}列")
+                if rag_chunks_info["enabled"]:
+                    st.info(f"🔍 RAG已激活，检索到 {rag_chunks_info['chunks_count']} 个相关数据片段")
+                
+                # 创建异步生成器 - 使用RAG处理后的数据内容
                 thought_generator = mcp_agent.think_and_act(
                     analysis_requirements,
-                    data_json,  # 传递数据JSON
+                    context_text,  # 传递RAG处理后的数据内容
                     Path(uploaded_file.name).suffix,
                     str(file_path)
                 )
@@ -506,13 +665,19 @@ async def process_mcp_data_analysis(uploaded_file, analysis_requirements, mcp_ag
         else:
             # 不显示思考过程，直接处理
             with st.spinner("🧠 MCP智能体正在深度分析数据..."):
+                # 在简化模式下也显示数据和RAG信息
+                st.info(f"📊 数据已加载: {df.shape[0]}行 × {df.shape[1]}列")
+                if rag_chunks_info["enabled"]:
+                    st.info(f"🔍 RAG已激活，检索到 {rag_chunks_info['chunks_count']} 个相关数据片段")
+                
                 # 这里可以调用mcp_agent的同步方法，但目前使用think_and_act并忽略流
                 result = await mcp_agent.process({
                     "question": analysis_requirements,
-                    "document_content": data_json,
+                    "document_content": context_text,
                     "document_type": Path(uploaded_file.name).suffix,
                     "document_file_path": str(file_path),
-                    "confidence_threshold": confidence_threshold
+                    "confidence_threshold": confidence_threshold,
+                    "rag_info": rag_chunks_info
                 })
                 
                 if result.get("answer"):
@@ -771,7 +936,8 @@ def main():
                     process_mcp_qa(uploaded_file, question, mcp_agent, 
                                  answer_style, include_quotes, confidence_threshold,
                                  max_iterations if 'max_iterations' in locals() else 10,
-                                 show_thinking if 'show_thinking' in locals() else True)
+                                 show_thinking if 'show_thinking' in locals() else True,
+                                 use_rag, use_reranker, rag_top_k, rag_rerank_top_n)
                 )
             else:
                 # 传统问答处理流程
@@ -855,6 +1021,17 @@ def main():
                     show_thinking = st.checkbox("显示思考过程", value=True, key="data_show_thinking")
                 with col3:
                     confidence_threshold = st.slider("置信度阈值", 0.1, 1.0, 0.7, key="data_confidence")
+                
+                # RAG 相关参数
+                st.markdown("**RAG设置**")
+                col4, col5, col6 = st.columns(3)
+                with col4:
+                    use_rag = st.checkbox("启用RAG", value=True, key="data_use_rag")
+                with col5:
+                    use_reranker = st.checkbox("启用重排", value=True, key="data_use_reranker")
+                with col6:
+                    rag_top_k = st.slider("RAG TopK", 4, 20, 8, key="data_rag_top_k")
+                rag_rerank_top_n = st.slider("重排后片段数", 2, 10, 4, key="data_rag_rerank_n")
             
             # 开始分析按钮
             if st.button("🧠 开始深度分析", type="primary", use_container_width=True, key="data_analysis_button"):
@@ -869,7 +1046,9 @@ def main():
                             run_async_in_streamlit(
                                 process_mcp_data_analysis(data_uploader, analysis_requirements, mcp_agent, 
                                                         max_iterations=max_iterations, show_thinking=show_thinking,
-                                                        confidence_threshold=confidence_threshold)
+                                                        confidence_threshold=confidence_threshold,
+                                                        use_rag=use_rag, use_reranker=use_reranker,
+                                                        rag_top_k=rag_top_k, rag_rerank_top_n=rag_rerank_top_n)
                             )
                     else:
                         st.warning("💡 数据分析当前仅支持MCP智能助手模式")
