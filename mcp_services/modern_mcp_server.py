@@ -257,23 +257,46 @@ class MCPClient:
     @asynccontextmanager
     async def get_session(self):
         """异步上下文管理器，用于获取和管理MCP会话"""
-        if not self.connected or not self.session:
-            await self.connect()
-        
-        if not self.session:
-            raise ConnectionError("无法建立MCP会话")
+        import asyncio
         
         try:
+            if not self.connected or not self.session:
+                # 添加连接超时
+                await asyncio.wait_for(self.connect(), timeout=15.0)
+            
+            if not self.session:
+                raise ConnectionError("无法建立MCP会话")
+            
             yield self.session
+        except asyncio.TimeoutError:
+            logger.error("MCP服务器连接超时")
+            raise ConnectionError("MCP服务器连接超时")
+        except Exception as e:
+            logger.error(f"获取MCP会话失败: {e}")
+            raise
         finally:
             # 在这里可以添加会话级别的清理逻辑（如果需要）
             pass
 
     async def connect(self):
-        """连接到MCP服务器"""
-        if self.connected:
+        """连接到MCP服务器（幂等操作）"""
+        # 如果已经连接，直接返回
+        if self.connected and self.session:
+            logger.debug("MCP客户端已连接，跳过重复连接")
             return
             
+        # 防止并发连接
+        if hasattr(self, '_connecting') and self._connecting:
+            logger.debug("MCP客户端正在连接中，等待...")
+            # 等待连接完成
+            import asyncio
+            for _ in range(50):  # 等待最多5秒
+                if self.connected:
+                    return
+                await asyncio.sleep(0.1)
+            raise ConnectionError("连接超时")
+            
+        self._connecting = True
         try:
             if self.server_url.startswith("http"):
                 logger.info(f"使用streamable HTTP连接到: {self.server_url}")
@@ -302,62 +325,86 @@ class MCPClient:
             self.connected = False
             await self.close() # 连接失败时尝试清理
             raise
+        finally:
+            self._connecting = False
     
     async def list_tools(self) -> List[ToolDefinition]:
         """获取所有可用工具，并解析其参数定义"""
+        import asyncio
+        
         try:
-            async with self.get_session() as session:
-                logger.info("使用MCP协议获取工具列表")
-                tools_result = await session.list_tools()
-                
-                tools: List[ToolDefinition] = []
-                if hasattr(tools_result, 'tools'):
-                    for tool in tools_result.tools:
-                        name = getattr(tool, 'name', 'unknown_tool')
-                        description = getattr(tool, 'description', '')
-                        parameters: Dict[str, ToolParameter] = {}
-                        required_params: List[str] = []
-
-                        input_schema = getattr(tool, 'input_schema', {})
-                        if isinstance(input_schema, dict):
-                            schema_props = input_schema.get('properties', {})
-                            required_params = input_schema.get('required', [])
-                            
-                            for param_name, schema in schema_props.items():
-                                type_str = schema.get('type', 'string')
-                                type_map = {
-                                    'string': ToolParameterType.STRING,
-                                    'number': ToolParameterType.NUMBER,
-                                    'integer': ToolParameterType.INTEGER,
-                                    'boolean': ToolParameterType.BOOLEAN,
-                                    'array': ToolParameterType.ARRAY,
-                                    'object': ToolParameterType.OBJECT,
-                                }
-                                param_type = type_map.get(type_str, ToolParameterType.STRING)
-
-                                parameters[param_name] = ToolParameter(
-                                    type=param_type,
-                                    description=schema.get('description', ''),
-                                    required=param_name in required_params,
-                                    default=schema.get('default'),
-                                    enum=schema.get('enum')
-                                )
-
-                        tools.append(ToolDefinition(
-                            name=name,
-                            description=description,
-                            parameters=parameters,
-                            required_parameters=required_params
-                        ))
-                
-                logger.info(f"通过MCP协议解析到 {len(tools)} 个工具")
-                return tools
-                
+            # 使用Python 3.8+兼容的超时处理
+            try:
+                # Python 3.11+ 版本
+                async with asyncio.timeout(20.0):
+                    return await self._do_list_tools()
+            except AttributeError:
+                # Python 3.8-3.10 版本
+                return await asyncio.wait_for(self._do_list_tools(), timeout=20.0)
+                    
+        except asyncio.TimeoutError:
+            logger.error("获取工具列表超时")
+            return []
+        except ConnectionError as e:
+            logger.error(f"MCP连接错误: {e}")
+            return []        
         except Exception as e:
             logger.error(f"获取工具列表失败: {e}")
             import traceback
             logger.error(traceback.format_exc())
             return []
+    
+    async def _do_list_tools(self) -> List[ToolDefinition]:
+        """执行获取工具列表的核心逻辑"""
+        async with self.get_session() as session:
+            logger.info("使用MCP协议获取工具列表")
+            tools_result = await session.list_tools()
+            
+            tools: List[ToolDefinition] = []
+            if hasattr(tools_result, 'tools'):
+                for tool in tools_result.tools:
+                    name = getattr(tool, 'name', 'unknown_tool')
+                    description = getattr(tool, 'description', '')
+                    parameters: Dict[str, ToolParameter] = {}
+                    required_params: List[str] = []
+
+                    input_schema = getattr(tool, 'input_schema', {})
+                    if isinstance(input_schema, dict):
+                        schema_props = input_schema.get('properties', {})
+                        required_params = input_schema.get('required', [])
+                        
+                        for param_name, schema in schema_props.items():
+                            type_str = schema.get('type', 'string')
+                            type_map = {
+                                'string': ToolParameterType.STRING,
+                                'number': ToolParameterType.NUMBER,
+                                'integer': ToolParameterType.INTEGER,
+                                'boolean': ToolParameterType.BOOLEAN,
+                                'array': ToolParameterType.ARRAY,
+                                'object': ToolParameterType.OBJECT,
+                            }
+                            param_type = type_map.get(type_str, ToolParameterType.STRING)
+
+                            parameters[param_name] = ToolParameter(
+                                type=param_type,
+                                description=schema.get('description', ''),
+                                required=param_name in required_params,
+                                default=schema.get('default'),
+                                enum=schema.get('enum')
+                            )
+
+                    tools.append(ToolDefinition(
+                        name=name,
+                        description=description,
+                        parameters=parameters,
+                        required_parameters=required_params
+                    ))
+                
+                logger.info(f"通过MCP协议解析到 {len(tools)} 个工具")
+                return tools
+            else:
+                logger.warning("工具结果中没有找到tools属性")
+                return []
     
     async def call_tool(self, tool_name: str, parameters: Dict[str, Any], 
                        session_id: Optional[str] = None) -> ToolCallResult:

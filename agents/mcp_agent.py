@@ -60,7 +60,15 @@ class MCPAgent(BaseAgent):
             self.llm_provider = "ollama"
     
     async def initialize(self):
-        """初始化智能体"""
+        """初始化智能体（幂等操作）"""
+        # 如果已经初始化过，直接返回
+        if self.available_tools and len(self.available_tools) > 0:
+            logger.info(f"智能体已初始化，跳过重复初始化（工具数量: {len(self.available_tools)}）")
+            return
+        
+        # 重置工具列表
+        self.available_tools = []
+        
         # 注册所有可用工具
         await self._register_tools()
         logger.info(f"MCP智能体初始化完成，注册了 {len(self.available_tools)} 个工具")
@@ -96,10 +104,12 @@ class MCPAgent(BaseAgent):
         self.available_tools.append(self.final_answer_tool)
         logger.info(f"已注册特殊工具: {self.final_answer_tool.name}")
 
-        # 合并远程MCP服务器上的工具定义
+        # 合并远程MCP服务器上的工具定义（可选，失败时不影响本地工具使用）
         try:
             from mcp_services.modern_mcp_server import mcp_client
-            remote_tools = await mcp_client.list_tools()
+            # 添加超时和重试机制
+            import asyncio
+            remote_tools = await asyncio.wait_for(mcp_client.list_tools(), timeout=10.0)
             if remote_tools:
                 local_names = {t.name for t in self.available_tools}
                 added = 0
@@ -108,8 +118,14 @@ class MCPAgent(BaseAgent):
                         self.available_tools.append(rt)
                         added += 1
                 logger.info(f"从远程MCP服务器加载工具 {added} 个，总计 {len(self.available_tools)} 个")
+            else:
+                logger.info(f"远程MCP服务器无可用工具，仅使用本地工具，总计 {len(self.available_tools)} 个")
+        except asyncio.TimeoutError:
+            logger.warning(f"远程MCP服务器连接超时，仅使用本地工具")
+            logger.info(f"仅使用本地工具，总计 {len(self.available_tools)} 个")
         except Exception as e:
-            logger.warning(f"获取远程工具列表失败: {e}")
+            logger.warning(f"获取远程工具列表失败: {e}，继续使用本地工具")
+            logger.info(f"仅使用本地工具，总计 {len(self.available_tools)} 个")
     
     @log_async_generator(agent_logger)
     async def think_and_act(self, user_query: str, document_content: str = None, 
