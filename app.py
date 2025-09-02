@@ -371,6 +371,116 @@ async def process_mcp_qa(uploaded_file, question, mcp_agent, answer_style="detai
         if 'status_manager' in locals():
             status_manager.complete_conversation(False)
 
+async def process_mcp_data_analysis(uploaded_file, analysis_requirements, mcp_agent, 
+                                   max_iterations=10, show_thinking=True, confidence_threshold=0.7):
+    """使用MCP智能体处理数据分析"""
+    try:
+        # 进度指示
+        status_manager = ConversationStatusManager()
+        status_manager.start_conversation(max_iterations)
+        
+        performance_monitor = PerformanceMonitor()
+        performance_monitor.start_monitoring()
+        
+        # 保存文件
+        file_config = get_config("file")
+        upload_dir = Path(file_config.get("upload_dir", "uploads"))
+        upload_dir.mkdir(exist_ok=True)
+        
+        file_path = upload_dir / uploaded_file.name
+        with open(file_path, "wb") as f:
+            f.write(uploaded_file.getbuffer())
+        
+        status_manager.update_step("thinking", "数据文件已保存，开始解析...")
+        
+        # 读取数据
+        try:
+            df = pd.read_excel(file_path)
+            data_json = df.to_json(orient='records', date_format='iso')
+            status_manager.update_step("thinking", f"数据解析完成，{df.shape[0]}行{df.shape[1]}列，开始MCP智能体分析...")
+        except Exception as e:
+            st.error(f"❌ 数据解析失败: {str(e)}")
+            status_manager.complete_conversation(False)
+            return
+        
+        # 设置智能体参数
+        mcp_agent.max_iterations = max_iterations
+        
+        # 创建流式聊天界面
+        if show_thinking:
+            chat_interface = StreamingChatInterface()
+            
+            # 显示思考过程流
+            logger.info("开始创建MCP智能体数据分析流程")
+            try:
+                # 确保智能体已初始化
+                if not hasattr(mcp_agent, 'available_tools') or not mcp_agent.available_tools:
+                    await mcp_agent.initialize()
+                
+                # 创建异步生成器 - 使用数据JSON作为document_content
+                thought_generator = mcp_agent.think_and_act(
+                    analysis_requirements,
+                    data_json,  # 传递数据JSON
+                    Path(uploaded_file.name).suffix,
+                    str(file_path)
+                )
+                logger.info(f"数据分析思考生成器创建成功: {type(thought_generator)}")
+                
+                # 显示思考流程
+                final_answer = await chat_interface.display_thought_stream(thought_generator)
+                logger.info(f"数据分析思考流程完成，最终答案长度: {len(final_answer) if final_answer else 0}")
+                
+            except Exception as e:
+                logger.error(f"MCP数据分析思考流程执行失败: {e}")
+                import traceback
+                logger.error(f"错误堆栈: {traceback.format_exc()}")
+                st.error(f"❌ MCP智能体数据分析执行失败: {str(e)}")
+                return
+            
+            status_manager.complete_conversation(True)
+            performance_monitor.end_monitoring()
+            
+            # 显示性能报告
+            with st.expander("📊 执行性能报告", expanded=False):
+                performance_monitor.show_performance_report()
+            
+            # 显示状态历史
+            with st.expander("📋 详细执行历史", expanded=False):
+                status_manager.show_status_history()
+        
+        else:
+            # 不显示思考过程，直接处理
+            with st.spinner("🧠 MCP智能体正在深度分析数据..."):
+                # 这里可以调用mcp_agent的同步方法，但目前使用think_and_act并忽略流
+                result = await mcp_agent.process({
+                    "question": analysis_requirements,
+                    "document_content": data_json,
+                    "document_type": Path(uploaded_file.name).suffix,
+                    "document_file_path": str(file_path),
+                    "confidence_threshold": confidence_threshold
+                })
+                
+                if result.get("answer"):
+                    st.markdown("### 🎯 数据分析结果")
+                    st.write(result["answer"])
+                    
+                    # 显示简化的结果信息
+                    col1, col2, col3 = st.columns(3)
+                    with col1:
+                        st.metric("思考轮数", result.get("iterations_used", 0))
+                    with col2:
+                        st.metric("可用工具", result.get("tools_available", 0))
+                    with col3:
+                        st.metric("思考步骤", len(result.get("thought_processes", [])))
+    
+    except Exception as e:
+        st.error(f"❌ MCP数据分析处理失败: {str(e)}")
+        st.warning("💡 如果问题持续存在，请尝试简化分析要求或检查数据格式")
+        logger.error(f"MCP数据分析处理失败: {e}")
+        
+        if 'status_manager' in locals():
+            status_manager.complete_conversation(False)
+
 def display_analysis_results(result: Dict[str, Any]):
     """显示数据分析结果"""
     st.success("✅ 数据分析完成！")
@@ -646,7 +756,7 @@ def main():
 
     with tab2:
         st.header("智能数据分析")
-    
+
         st.markdown("### 📁 文档上传")
         
         data_uploader = st.file_uploader(
@@ -654,73 +764,67 @@ def main():
             type=["xlsx", "xls"],
             key="data_uploader"
         )
-
-        if data_uploader:
-            st.success(f"✅ 文件已加载: **{data_uploader.name}**")
+        
+        if data_uploader is not None:
+            st.success(f"✅ 数据文件已加载: **{data_uploader.name}**")
             
-            try:
-                # seek(0) 确保文件指针在开头，可以被多次读取
-                data_uploader.seek(0)
-                temp_df = pd.read_excel(data_uploader)
-                all_columns = temp_df.columns.tolist()
-                numeric_columns = temp_df.select_dtypes(include=['number']).columns.tolist()
-            except Exception as e:
-                st.error(f"读取列名失败: {e}")
-                st.stop()
-            
-            analysis_type = st.selectbox(
-                "选择分析类型",
-                ["comprehensive", "statistical", "correlation", "trend"],
-                format_func=lambda x: {"comprehensive": "📈 综合分析", "statistical": "📊 描述性统计",
-                                    "correlation": "🔗 相关性分析", "trend": "📉 趋势分析"}[x],
-                key="analysis_type"
+            # 分析要求输入
+            analysis_requirements = st.text_area(
+                "请输入您的分析要求",
+                height=100,
+                placeholder="例如：\n• 帮我分析销售额和广告投入的关系\n• 找出哪些产品的利润率最高\n• 分析数据中的趋势和异常值",
+                key="analysis_requirements"
             )
-
-            trend_params = {}
-            if analysis_type == 'trend':
-                st.info("请选择用于趋势分析的数值列和可选的时间列。")
-                col1, col2 = st.columns(2)
+            
+            # 高级选项
+            with st.expander("🔧 高级选项"):
+                col1, col2, col3 = st.columns(3)
                 with col1:
-                    trend_params["trend_target_col"] = st.selectbox(
-                        "选择要分析的数值列", options=numeric_columns, index=0 if numeric_columns else None
-                    )
+                    max_iterations = st.slider("最大思考轮数", 5, 20, 10, key="data_max_iter")
                 with col2:
-                    trend_params["trend_time_col"] = st.selectbox(
-                        "选择时间/日期列 (可选)", options=[None] + all_columns
-                    )
-
-            requirements = st.text_area(
-                "请输入您的具体分析要求 (可选)", height=100,
-                placeholder="例如：\n• 帮我分析销售额和广告投入的关系。\n• 找出哪些产品的利润率最高。",
-                key="analysis_reqs"
-            )
-
-            if st.button("🚀 开始分析", type="primary", use_container_width=True, key="analysis_button"):
-                with st.spinner("🔄 AI正在进行数据分析..."):
-                    run_async_in_streamlit(
-                        process_data_analysis(data_uploader, analysis_type, requirements, trend_params)
-                    )
-
+                    show_thinking = st.checkbox("显示思考过程", value=True, key="data_show_thinking")
+                with col3:
+                    confidence_threshold = st.slider("置信度阈值", 0.1, 1.0, 0.7, key="data_confidence")
+            
+            # 开始分析按钮
+            if st.button("🧠 开始深度分析", type="primary", use_container_width=True, key="data_analysis_button"):
+                if not analysis_requirements.strip():
+                    st.warning("⚠️ 请先输入分析要求")
+                else:
+                    # 根据选择的Agent类型执行不同的处理流程
+                    if agent_type == "MCP智能助手":
+                        if mcp_agent is None:
+                            st.error("❌ MCP智能体未初始化")
+                        else:
+                            run_async_in_streamlit(
+                                process_mcp_data_analysis(data_uploader, analysis_requirements, mcp_agent, 
+                                                        max_iterations=max_iterations, show_thinking=show_thinking,
+                                                        confidence_threshold=confidence_threshold)
+                            )
+                    else:
+                        st.warning("💡 数据分析当前仅支持MCP智能助手模式")
+        
         else:
             # 上传提示
             st.markdown("""
             <div style="border: 2px dashed #ccc; border-radius: 10px; padding: 3rem; text-align: center; margin: 2rem 0;">
                 <h3 style="color: #666;">📊 智能数据分析</h3>
-                <p style="color: #888;">上传文档后即可开始智能数据分析</p>
-                <p style="font-size: 0.9rem; color: #aaa;">支持复杂问题和多轮对话</p>
+                <p style="color: #888;">上传数据文件后即可开始智能数据分析</p>
+                <p style="font-size: 0.9rem; color: #aaa;">支持复杂分析和多轮推理</p>
             </div>
             """, unsafe_allow_html=True)
             
-            # 问答示例
+            # 数据分析示例
             st.markdown("#### 💡 数据分析示例")
             examples = [
-                "帮我分析销售额和广告投入的关系。",
-                "找出哪些产品的利润率最高。",
-                "预测下个季度的用户增长趋势。", 
+                "帮我分析销售额和广告投入的关系",
+                "找出哪些产品的利润率最高",
+                "分析数据中的趋势和异常值",
+                "预测下个季度的销售增长",
             ]
             
             for example in examples:
-                st.info(f"**数据分析示例**: {example}")
+                st.info(f"**分析示例**: {example}")
 
 if __name__ == "__main__":
     main()
