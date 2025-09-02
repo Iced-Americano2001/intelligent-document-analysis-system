@@ -606,9 +606,23 @@ def main():
             st.warning("MCP智能体初始化失败，将使用传统问答模式")
             agent_type = "传统问答"
 
-    tab1, tab2 = st.tabs(["🤖 智能文档问答", "📊 智能数据分析"])
+    # 初始化tab状态
+    if 'active_tab' not in st.session_state:
+        st.session_state.active_tab = "🤖 智能文档问答"
+
+    # 使用radio按钮替代tabs来更好地控制状态
+    active_tab = st.radio(
+        "选择功能",
+        ["🤖 智能文档问答", "📊 智能数据分析"],
+        index=["🤖 智能文档问答", "📊 智能数据分析"].index(st.session_state.active_tab),
+        horizontal=True,
+        key="main_tab_selector"
+    )
     
-    with tab1:
+    # 更新session state
+    st.session_state.active_tab = active_tab
+    
+    if active_tab == "🤖 智能文档问答":
         st.header("智能文档问答")
 
         st.markdown("### 📁 文档上传")
@@ -620,7 +634,8 @@ def main():
         uploaded_file = st.file_uploader(
             "选择需要问答的文档",
             type=supported_formats,
-            help="支持PDF、Word、文本等格式"
+            help="支持PDF、Word、文本等格式",
+            key="document_uploader"
         )
         
         if uploaded_file is not None:
@@ -754,7 +769,7 @@ def main():
             for example in examples:
                 st.info(f"**问题示例**: {example}")
 
-    with tab2:
+    elif active_tab == "📊 智能数据分析":
         st.header("智能数据分析")
 
         st.markdown("### 📁 文档上传")
