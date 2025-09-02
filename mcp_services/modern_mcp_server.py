@@ -279,24 +279,10 @@ class MCPClient:
             pass
 
     async def connect(self):
-        """连接到MCP服务器（幂等操作）"""
-        # 如果已经连接，直接返回
-        if self.connected and self.session:
-            logger.debug("MCP客户端已连接，跳过重复连接")
+        """连接到MCP服务器"""
+        if self.connected:
             return
             
-        # 防止并发连接
-        if hasattr(self, '_connecting') and self._connecting:
-            logger.debug("MCP客户端正在连接中，等待...")
-            # 等待连接完成
-            import asyncio
-            for _ in range(50):  # 等待最多5秒
-                if self.connected:
-                    return
-                await asyncio.sleep(0.1)
-            raise ConnectionError("连接超时")
-            
-        self._connecting = True
         try:
             if self.server_url.startswith("http"):
                 logger.info(f"使用streamable HTTP连接到: {self.server_url}")
@@ -325,8 +311,6 @@ class MCPClient:
             self.connected = False
             await self.close() # 连接失败时尝试清理
             raise
-        finally:
-            self._connecting = False
     
     async def list_tools(self) -> List[ToolDefinition]:
         """获取所有可用工具，并解析其参数定义"""

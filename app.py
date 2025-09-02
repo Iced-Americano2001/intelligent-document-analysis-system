@@ -112,19 +112,45 @@ def initialize_mcp_agent():
     try:
         mcp_agent = MCPDocumentQAAgent()
         
-        # 在Streamlit缓存中完成初始化
-        try:
-            # 使用run_async_in_streamlit来安全地初始化
-            def _sync_initialize():
-                return run_async_in_streamlit(mcp_agent.initialize())
-            
-            _sync_initialize()
-            logger.info("MCP智能体初始化完成")
-        except Exception as e:
-            logger.warning(f"MCP智能体初始化失败，将在首次使用时重试: {e}")
-            # 设置标记，表示需要延迟初始化
-            mcp_agent._needs_initialization = True
+        # 同步预初始化本地工具（避免第一次使用时的异步初始化问题）
+        def _sync_pre_init():
+            try:
+                # 同步加载本地工具模块
+                import tools
+                import pkgutil
+                import importlib
+                from tools.base_tool import tool_registry
+                from mcp_services.modern_mcp_server import mcp_server
+                
+                logger.info("开始预加载本地工具模块...")
+                for _, name, _ in pkgutil.iter_modules(tools.__path__, tools.__name__ + "."):
+                    try:
+                        importlib.import_module(name)
+                        logger.debug(f"预加载工具模块: {name}")
+                    except Exception as e:
+                        logger.warning(f"预加载工具模块 {name} 失败: {e}")
+                
+                # 预注册本地工具到智能体
+                tools_in_registry = tool_registry.list_tools()
+                for tool in tools_in_registry:
+                    if hasattr(tool, 'definition'):
+                        mcp_agent.available_tools.append(tool.definition)
+                
+                # 添加final_answer工具
+                mcp_agent.available_tools.append(mcp_agent.final_answer_tool)
+                
+                logger.info(f"预初始化完成，加载了 {len(mcp_agent.available_tools)} 个本地工具")
+                mcp_agent._local_tools_loaded = True
+                return True
+            except Exception as e:
+                logger.warning(f"预初始化失败: {e}")
+                mcp_agent._local_tools_loaded = False
+                return False
         
+        # 执行同步预初始化
+        _sync_pre_init()
+        
+        logger.info("MCP智能体创建完成，本地工具已预加载")
         return mcp_agent
     except Exception as e:
         logger.error(f"MCP智能体创建失败: {e}")
@@ -318,39 +344,17 @@ async def process_mcp_qa(uploaded_file, question, mcp_agent, answer_style="detai
                 # 显示思考过程流 - 正确传递异步生成器
                 logger.info("开始创建MCP智能体思考流程")
                 try:
-                    # 检查智能体初始化状态
-                    needs_init = (
-                        not hasattr(mcp_agent, 'available_tools') or 
-                        not mcp_agent.available_tools or
-                        getattr(mcp_agent, '_needs_initialization', False)
-                    )
-                    
-                    if needs_init:
-                        logger.info("智能体需要初始化，开始初始化...")
+                    # 智能初始化检查
+                    if not mcp_agent.is_initialized():
+                        logger.info("智能体需要初始化...")
                         
-                        # 添加初始化进度显示
-                        init_progress = st.progress(0, text="🔧 正在初始化MCP智能体...")
+                        # 显示初始化进度
+                        with st.spinner("🔧 正在初始化MCP智能体..."):
+                            await mcp_agent.ensure_initialized()
                         
-                        max_retries = 2  # 减少重试次数
-                        for retry in range(max_retries):
-                            try:
-                                init_progress.progress((retry + 1) * 40, text=f"🔧 初始化尝试 {retry + 1}/{max_retries}...")
-                                await mcp_agent.initialize()
-                                init_progress.progress(100, text="✅ MCP智能体初始化完成")
-                                # 清除初始化标记
-                                mcp_agent._needs_initialization = False
-                                break
-                            except Exception as init_e:
-                                logger.warning(f"初始化尝试 {retry + 1} 失败: {init_e}")
-                                if retry == max_retries - 1:
-                                    init_progress.progress(100, text="❌ 初始化失败，使用本地工具")
-                                    st.warning(f"⚠️ MCP智能体初始化失败，将仅使用本地工具: {init_e}")
-                                    # 即使初始化失败，也继续执行（使用本地工具）
-                                    break
-                                else:
-                                    await asyncio.sleep(1)  # 重试前等待
+                        st.success("✅ MCP智能体初始化完成")
                     else:
-                        logger.info("智能体已初始化，直接使用")
+                        logger.info(f"智能体已初始化，{len(mcp_agent.available_tools)}个工具可用")
                     
                     # 创建异步生成器
                     thought_generator = mcp_agent.think_and_act(
@@ -456,39 +460,17 @@ async def process_mcp_data_analysis(uploaded_file, analysis_requirements, mcp_ag
             # 显示思考过程流
             logger.info("开始创建MCP智能体数据分析流程")
             try:
-                # 确保智能体已初始化（带重试机制）
-                needs_init = (
-                    not hasattr(mcp_agent, 'available_tools') or 
-                    not mcp_agent.available_tools or
-                    getattr(mcp_agent, '_needs_initialization', False)
-                )
-                
-                if needs_init:
-                    logger.info("智能体需要初始化，开始初始化...")
+                # 智能初始化检查
+                if not mcp_agent.is_initialized():
+                    logger.info("智能体需要初始化...")
                     
-                    # 添加初始化进度显示
-                    init_progress = st.progress(0, text="🔧 正在初始化MCP智能体...")
+                    # 显示初始化进度
+                    with st.spinner("🔧 正在初始化MCP智能体..."):
+                        await mcp_agent.ensure_initialized()
                     
-                    max_retries = 2  # 减少重试次数
-                    for retry in range(max_retries):
-                        try:
-                            init_progress.progress((retry + 1) * 40, text=f"🔧 初始化尝试 {retry + 1}/{max_retries}...")
-                            await mcp_agent.initialize()
-                            init_progress.progress(100, text="✅ MCP智能体初始化完成")
-                            # 清除初始化标记
-                            mcp_agent._needs_initialization = False
-                            break
-                        except Exception as init_e:
-                            logger.warning(f"初始化尝试 {retry + 1} 失败: {init_e}")
-                            if retry == max_retries - 1:
-                                init_progress.progress(100, text="❌ 初始化失败，使用本地工具")
-                                st.warning(f"⚠️ MCP智能体初始化失败，将仅使用本地工具: {init_e}")
-                                # 即使初始化失败，也继续执行（使用本地工具）
-                                break
-                            else:
-                                await asyncio.sleep(1)  # 重试前等待
+                    st.success("✅ MCP智能体初始化完成")
                 else:
-                    logger.info("智能体已初始化，直接使用")
+                    logger.info(f"智能体已初始化，{len(mcp_agent.available_tools)}个工具可用")
                 
                 # 创建异步生成器 - 使用数据JSON作为document_content
                 thought_generator = mcp_agent.think_and_act(

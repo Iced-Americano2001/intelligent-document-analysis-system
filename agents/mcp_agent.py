@@ -59,50 +59,83 @@ class MCPAgent(BaseAgent):
         else:
             self.llm_provider = "ollama"
     
+    def is_initialized(self) -> bool:
+        """检查智能体是否已初始化"""
+        return (hasattr(self, 'available_tools') and 
+                len(self.available_tools) > 0 and
+                any(tool.name == 'final_answer' for tool in self.available_tools))
+    
+    async def ensure_initialized(self):
+        """确保智能体已初始化，如果未初始化则进行初始化"""
+        if not self.is_initialized():
+            await self.initialize()
+    
     async def initialize(self):
-        """初始化智能体（幂等操作）"""
-        # 如果已经初始化过，直接返回
-        if self.available_tools and len(self.available_tools) > 0:
-            logger.info(f"智能体已初始化，跳过重复初始化（工具数量: {len(self.available_tools)}）")
-            return
-        
-        # 重置工具列表
-        self.available_tools = []
-        
-        # 注册所有可用工具
-        await self._register_tools()
+        """初始化智能体"""
+        # 如果本地工具已经预加载，则只尝试加载远程工具
+        if hasattr(self, '_local_tools_loaded') and self._local_tools_loaded:
+            logger.info("本地工具已预加载，仅尝试加载远程工具")
+            await self._load_remote_tools_only()
+        else:
+            # 完整初始化流程
+            await self._register_tools()
         logger.info(f"MCP智能体初始化完成，注册了 {len(self.available_tools)} 个工具")
+    
+    async def _load_remote_tools_only(self):
+        """仅加载远程MCP工具（本地工具已预加载）"""
+        try:
+            from mcp_services.modern_mcp_server import mcp_client
+            import asyncio
+            # 快速超时，失败就跳过
+            remote_tools = await asyncio.wait_for(mcp_client.list_tools(), timeout=5.0)
+            if remote_tools:
+                local_names = {t.name for t in self.available_tools}
+                added = 0
+                for rt in remote_tools:
+                    if rt.name not in local_names:
+                        self.available_tools.append(rt)
+                        added += 1
+                logger.info(f"加载远程工具 {added} 个，总计 {len(self.available_tools)} 个")
+            else:
+                logger.info(f"无远程工具可用，使用本地工具，总计 {len(self.available_tools)} 个")
+        except Exception as e:
+            logger.info(f"远程工具加载失败，使用本地工具: {e}")
+            logger.info(f"使用本地工具，总计 {len(self.available_tools)} 个")
     
     async def _register_tools(self):
         """注册所有可用工具到MCP服务器"""
         from mcp_services.modern_mcp_server import mcp_server
         
-        # 动态导入所有本地工具模块
-        logger.info("开始动态加载本地工具...")
-        for _, name, _ in pkgutil.iter_modules(tools.__path__, tools.__name__ + "."):
-            try:
-                importlib.import_module(name)
-                logger.debug(f"成功导入工具模块: {name}")
-            except Exception as e:
-                logger.warning(f"导入工具模块 {name} 失败: {e}")
+        # 如果工具已经预加载，跳过本地工具注册
+        if not (hasattr(self, '_local_tools_loaded') and self._local_tools_loaded):
+            # 动态导入所有本地工具模块
+            logger.info("开始动态加载本地工具...")
+            for _, name, _ in pkgutil.iter_modules(tools.__path__, tools.__name__ + "."):
+                try:
+                    importlib.import_module(name)
+                    logger.debug(f"成功导入工具模块: {name}")
+                except Exception as e:
+                    logger.warning(f"导入工具模块 {name} 失败: {e}")
 
-        tools_in_registry = tool_registry.list_tools()
-        logger.info(f"从注册表中发现 {len(tools_in_registry)} 个本地工具。")
-        
-        for tool in tools_in_registry:
-            try:
-                # 注册工具到MCP服务器
-                if not hasattr(tool, 'definition'): continue # 跳过无效工具
-                
-                await mcp_server.register_tool(tool.definition, tool.safe_execute)
-                self.available_tools.append(tool.definition)
-                logger.info(f"注册本地工具: {tool.name}")
-            except Exception as e:
-                logger.error(f"注册工具 {tool.name} 失败: {e}")
+            tools_in_registry = tool_registry.list_tools()
+            logger.info(f"从注册表中发现 {len(tools_in_registry)} 个本地工具。")
+            
+            for tool in tools_in_registry:
+                try:
+                    # 注册工具到MCP服务器
+                    if not hasattr(tool, 'definition'): continue # 跳过无效工具
+                    
+                    await mcp_server.register_tool(tool.definition, tool.safe_execute)
+                    self.available_tools.append(tool.definition)
+                    logger.info(f"注册本地工具: {tool.name}")
+                except Exception as e:
+                    logger.error(f"注册工具 {tool.name} 失败: {e}")
 
-        # 添加final_answer工具
-        self.available_tools.append(self.final_answer_tool)
-        logger.info(f"已注册特殊工具: {self.final_answer_tool.name}")
+            # 添加final_answer工具
+            self.available_tools.append(self.final_answer_tool)
+            logger.info(f"已注册特殊工具: {self.final_answer_tool.name}")
+        else:
+            logger.info("本地工具已预加载，跳过注册步骤")
 
         # 合并远程MCP服务器上的工具定义（可选，失败时不影响本地工具使用）
         try:
