@@ -43,3 +43,10 @@ def setup_session_state():
     """初始化session state"""
     if 'active_tab' not in st.session_state:
         st.session_state.active_tab = "🤖 智能文档问答"
+    
+    # 初始化对话历史
+    if 'conversation_history_qa' not in st.session_state:
+        st.session_state.conversation_history_qa = []
+    
+    if 'conversation_history_data' not in st.session_state:
+        st.session_state.conversation_history_data = []

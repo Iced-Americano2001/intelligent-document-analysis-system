@@ -45,8 +45,8 @@ def main():
     # Tab切换
     active_tab = st.radio(
         "选择功能",
-        ["🤖 智能文档问答", "📊 智能数据分析"],
-        index=["🤖 智能文档问答", "📊 智能数据分析"].index(st.session_state.active_tab),
+        ["🤖 智能文档问答", "📊 智能数据分析", "📋 对话报告"],
+        index=["🤖 智能文档问答", "📊 智能数据分析", "📋 对话报告"].index(st.session_state.active_tab) if st.session_state.active_tab in ["🤖 智能文档问答", "📊 智能数据分析", "📋 对话报告"] else 0,
         horizontal=True,
         key="main_tab_selector"
     )
@@ -58,6 +58,36 @@ def main():
         render_document_qa_tab(agent_type, mcp_agent)
     elif active_tab == "📊 智能数据分析":
         render_data_analysis_tab(agent_type, mcp_agent)
+    elif active_tab == "📋 对话报告":
+        render_conversation_report_tab()
+
+def render_conversation_report_tab():
+    """渲染对话报告标签页"""
+    try:
+        from ui.report_components import render_conversation_report_section
+        from utils.conversation_manager import conversation_manager
+        
+        st.header("对话报告管理")
+        st.markdown("### 📋 生成和管理您的对话报告")
+        
+        # 选择报告类型
+        report_type_tab = st.radio(
+            "选择报告类型",
+            ["文档问答报告", "数据分析报告"],
+            horizontal=True,
+            key="report_type_selector"
+        )
+        
+        conversation_type = "document_qa" if report_type_tab == "文档问答报告" else "data_analysis"
+        
+        # 渲染对应的报告部分
+        render_conversation_report_section(conversation_type)
+        
+    except Exception as e:
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.error(f"渲染对话报告标签页失败: {e}", exc_info=True)
+        st.error(f"❌ 对话报告功能加载失败: {str(e)}")
 
 def render_document_qa_tab(agent_type, mcp_agent):
     """渲染文档问答标签页"""
@@ -162,6 +192,14 @@ def render_document_qa_tab(agent_type, mcp_agent):
         
         # 问答示例
         display_examples("qa")
+        
+        # 添加快速报告功能
+        st.markdown("---")
+        try:
+            from ui.report_components import render_conversation_report_section
+            render_conversation_report_section("document_qa")
+        except Exception as e:
+            st.info("💡 对话报告功能需要先进行文档问答对话")
 
 def render_data_analysis_tab(agent_type, mcp_agent):
     """渲染数据分析标签页"""
@@ -220,6 +258,14 @@ def render_data_analysis_tab(agent_type, mcp_agent):
         
         # 数据分析示例
         display_examples("data")
+        
+        # 添加快速报告功能
+        st.markdown("---")
+        try:
+            from ui.report_components import render_conversation_report_section
+            render_conversation_report_section("data_analysis")
+        except Exception as e:
+            st.info("💡 对话报告功能需要先进行数据分析对话")
 
 if __name__ == "__main__":
     main()

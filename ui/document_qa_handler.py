@@ -108,6 +108,23 @@ async def process_document_qa(uploaded_file, question, answer_style="detailed", 
             if qa_result.get("success", False):
                 from ui.result_display import display_qa_results
                 display_qa_results(qa_result["result"])
+                
+                # 记录对话历史
+                try:
+                    from utils.conversation_manager import conversation_manager
+                    answer_text = qa_result["result"].get("answer", "")
+                    metadata = {
+                        "file_name": uploaded_file.name,
+                        "answer_style": answer_style,
+                        "confidence_threshold": confidence_threshold,
+                        "use_rag": use_rag,
+                        "use_reranker": use_reranker
+                    }
+                    conversation_manager.add_conversation(
+                        question, answer_text, "document_qa", metadata
+                    )
+                except Exception as e:
+                    logger.warning(f"记录对话历史失败: {e}")
             else:
                 st.error(f"❌ 问答失败: {qa_result.get('error', '未知错误')}")
                 st.warning("💡 建议重新表述问题或检查文档内容")
@@ -275,6 +292,24 @@ async def process_mcp_qa(uploaded_file, question, mcp_agent, answer_style="detai
                 # 显示状态历史
                 with st.expander("📋 详细执行历史", expanded=False):
                     status_manager.show_status_history()
+                
+                # 记录对话历史
+                try:
+                    from utils.conversation_manager import conversation_manager
+                    metadata = {
+                        "file_name": uploaded_file.name,
+                        "answer_style": answer_style,
+                        "confidence_threshold": confidence_threshold,
+                        "max_iterations": max_iterations,
+                        "use_rag": use_rag,
+                        "use_reranker": use_reranker,
+                        "agent_type": "MCP智能助手"
+                    }
+                    conversation_manager.add_conversation(
+                        question, final_answer or "处理完成", "document_qa", metadata
+                    )
+                except Exception as e:
+                    logger.warning(f"记录对话历史失败: {e}")
             
             else:
                 # 不显示思考过程，直接处理
@@ -297,6 +332,25 @@ async def process_mcp_qa(uploaded_file, question, mcp_agent, answer_style="detai
                             st.metric("可用工具", result.get("tools_available", 0))
                         with col3:
                             st.metric("思考步骤", len(result.get("thought_processes", [])))
+                        
+                        # 记录对话历史
+                        try:
+                            from utils.conversation_manager import conversation_manager
+                            metadata = {
+                                "file_name": uploaded_file.name,
+                                "answer_style": answer_style,
+                                "confidence_threshold": confidence_threshold,
+                                "max_iterations": max_iterations,
+                                "use_rag": use_rag,
+                                "use_reranker": use_reranker,
+                                "agent_type": "MCP智能助手(简化模式)",
+                                "iterations_used": result.get("iterations_used", 0)
+                            }
+                            conversation_manager.add_conversation(
+                                question, result["answer"], "document_qa", metadata
+                            )
+                        except Exception as e:
+                            logger.warning(f"记录对话历史失败: {e}")
                 
         else:
             st.error("❌ 文档解析失败")

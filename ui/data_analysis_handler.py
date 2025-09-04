@@ -38,6 +38,22 @@ async def process_data_analysis(uploaded_file, analysis_type, requirements, tren
         
         if analysis_result.get("success", False):
             display_analysis_results(analysis_result["result"])
+            
+            # 记录对话历史
+            try:
+                from utils.conversation_manager import conversation_manager
+                result_text = str(analysis_result["result"])  # 将分析结果转换为文本
+                metadata = {
+                    "file_name": uploaded_file.name,
+                    "analysis_type": analysis_type,
+                    "trend_params": trend_params,
+                    "agent_type": "传统分析"
+                }
+                conversation_manager.add_conversation(
+                    requirements, result_text, "data_analysis", metadata
+                )
+            except Exception as e:
+                logger.warning(f"记录对话历史失败: {e}")
         else:
             st.error(f"❌ 数据分析失败: {analysis_result.get('error', '未知错误')}")
     except Exception as e:
@@ -206,6 +222,24 @@ async def process_mcp_data_analysis(uploaded_file, analysis_requirements, mcp_ag
             # 显示状态历史
             with st.expander("📋 详细执行历史", expanded=False):
                 status_manager.show_status_history()
+            
+            # 记录对话历史
+            try:
+                from utils.conversation_manager import conversation_manager
+                metadata = {
+                    "file_name": uploaded_file.name,
+                    "max_iterations": max_iterations,
+                    "confidence_threshold": confidence_threshold,
+                    "use_rag": use_rag,
+                    "use_reranker": use_reranker,
+                    "agent_type": "MCP智能助手",
+                    "data_shape": f"{df.shape[0]}行×{df.shape[1]}列"
+                }
+                conversation_manager.add_conversation(
+                    analysis_requirements, final_answer or "分析完成", "data_analysis", metadata
+                )
+            except Exception as e:
+                logger.warning(f"记录对话历史失败: {e}")
         
         else:
             # 不显示思考过程，直接处理
@@ -237,6 +271,25 @@ async def process_mcp_data_analysis(uploaded_file, analysis_requirements, mcp_ag
                         st.metric("可用工具", result.get("tools_available", 0))
                     with col3:
                         st.metric("思考步骤", len(result.get("thought_processes", [])))
+                    
+                    # 记录对话历史
+                    try:
+                        from utils.conversation_manager import conversation_manager
+                        metadata = {
+                            "file_name": uploaded_file.name,
+                            "max_iterations": max_iterations,
+                            "confidence_threshold": confidence_threshold,
+                            "use_rag": use_rag,
+                            "use_reranker": use_reranker,
+                            "agent_type": "MCP智能助手(简化模式)",
+                            "data_shape": f"{df.shape[0]}行×{df.shape[1]}列",
+                            "iterations_used": result.get("iterations_used", 0)
+                        }
+                        conversation_manager.add_conversation(
+                            analysis_requirements, result["answer"], "data_analysis", metadata
+                        )
+                    except Exception as e:
+                        logger.warning(f"记录对话历史失败: {e}")
     
     except Exception as e:
         st.error(f"❌ MCP数据分析处理失败: {str(e)}")
