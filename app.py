@@ -27,7 +27,7 @@ def main():
     st.write("上传文档后，您可以用自然语言提问，AI助手将基于文档内容为您提供准确答案。")
     
     # 侧边栏
-    agent_type = render_sidebar()
+    render_sidebar()
     
     # 初始化服务
     if not initialize_services():
@@ -35,31 +35,55 @@ def main():
         st.stop()
 
     # 如果选择MCP智能体，初始化MCP服务
-    mcp_agent = None
-    if agent_type == "MCP智能助手":
-        mcp_agent = initialize_mcp_agent()
-        if mcp_agent is None:
-            st.warning("MCP智能体初始化失败，将使用传统问答模式")
-            agent_type = "传统问答"
+    mcp_agent = initialize_mcp_agent()
+    if mcp_agent is None:
+        st.warning("MCP智能体初始化失败")
 
     # Tab切换
-    active_tab = st.radio(
-        "选择功能",
-        ["🤖 智能文档问答", "📊 智能数据分析", "📋 对话报告"],
-        index=["🤖 智能文档问答", "📊 智能数据分析", "📋 对话报告"].index(st.session_state.active_tab) if st.session_state.active_tab in ["🤖 智能文档问答", "📊 智能数据分析", "📋 对话报告"] else 0,
-        horizontal=True,
-        key="main_tab_selector"
-    )
-    
-    # 更新session state
-    st.session_state.active_tab = active_tab
-    
-    if active_tab == "🤖 智能文档问答":
-        render_document_qa_tab(agent_type, mcp_agent)
-    elif active_tab == "📊 智能数据分析":
-        render_data_analysis_tab(agent_type, mcp_agent)
-    elif active_tab == "📋 对话报告":
+    if st.session_state.app_mode == "📄 智能文档问答":
+        render_document_qa_tab(mcp_agent)
+    elif st.session_state.app_mode == "📊 智能数据分析":
+        render_data_analysis_tab(mcp_agent)
+    elif st.session_state.app_mode == "📋 对话报告":
         render_conversation_report_tab()
+
+
+
+def render_sidebar():
+    """
+    渲染应用的侧边栏，作为主导航。
+    """
+    with st.sidebar:
+        st.markdown("")
+        st.markdown("")
+        st.markdown("")
+        # 1. 模式选择
+        st.header("⚙️ 模式选择")
+        app_mode = st.radio(
+            "",
+            ("📄 智能文档问答", "📊 智能数据分析", "📋 对话报告"),
+            key="app_mode",
+        )
+        st.markdown("---")
+
+        # 2. 根据选择的模式，显示不同的功能说明
+        if app_mode == "📄 智能文档问答":
+            st.header("💡 功能")
+            st.markdown("- 🤔 深度思考\n- 🔧 工具调用\n- 📊 过程透明\n- 🎯 智能决策")
+
+        elif app_mode == "📊 智能数据分析":
+            st.header("💡 功能")
+            st.markdown("- 📈 综合分析\n- 📊 描述性统计\n- 🔗 相关性分析\n- 📉 趋势分析")
+        
+        elif app_mode == "📋 对话报告":
+            st.header("💡 功能")
+            st.markdown("- 💾 保存对话\n- 📄 生成报告\n- 📂 管理历史")
+
+        # 3. 页脚信息
+        st.markdown("---")
+        st.info("当前版本: v3.0.0")
+
+
 
 def render_conversation_report_tab():
     """渲染对话报告标签页"""
@@ -89,7 +113,7 @@ def render_conversation_report_tab():
         logger.error(f"渲染对话报告标签页失败: {e}", exc_info=True)
         st.error(f"❌ 对话报告功能加载失败: {str(e)}")
 
-def render_document_qa_tab(agent_type, mcp_agent):
+def render_document_qa_tab(mcp_agent):
     """渲染文档问答标签页"""
     from config.settings import get_config
     
@@ -116,8 +140,6 @@ def render_document_qa_tab(agent_type, mcp_agent):
             st.metric("文件大小", f"{uploaded_file.size:,} 字节")
         with col2:
             st.metric("文件类型", Path(uploaded_file.name).suffix.upper())
-        with col3:
-            st.metric("AI类型", "🧠 MCP智能" if agent_type == "MCP智能助手" else "⚡ 传统问答")
         
         st.markdown("---")
         
@@ -135,60 +157,34 @@ def render_document_qa_tab(agent_type, mcp_agent):
         # 高级选项
         options = render_advanced_options(mode="qa")
         
-        # MCP特定选项
-        mcp_options = {}
-        if agent_type == "MCP智能助手":
-            mcp_options = render_mcp_options()
+        mcp_options = render_mcp_options()
         
         # 问答按钮
-        button_text = "🧠 开始深度分析" if agent_type == "MCP智能助手" else "🔍 开始问答"
+        button_text = "🧠 开始深度分析"
         if st.button(button_text, type="primary", use_container_width=True):
             if not question:
                 st.error("请输入问题内容！")
                 return
             
-            # 根据选择的Agent类型执行不同的处理流程
-            if agent_type == "MCP智能助手":
-                # MCP智能体处理流程
-                run_async_in_streamlit(
-                    process_mcp_qa(
-                        uploaded_file, question, mcp_agent, 
-                        options.get("answer_style", "detailed"),
-                        options.get("include_quotes", True),
-                        options.get("confidence_threshold", 0.7),
-                        mcp_options.get("max_iterations", 10),
-                        mcp_options.get("show_thinking", True),
-                        options.get("use_rag", True),
-                        options.get("use_reranker", True),
-                        options.get("rag_top_k", 12),
-                        options.get("rag_rerank_top_n", 6)
-                    )
+            # MCP智能体处理流程
+            run_async_in_streamlit(
+                process_mcp_qa(
+                    uploaded_file, question, mcp_agent, 
+                    options.get("answer_style", "detailed"),
+                    options.get("include_quotes", True),
+                    options.get("confidence_threshold", 0.7),
+                    mcp_options.get("max_iterations", 10),
+                    mcp_options.get("show_thinking", True),
+                    options.get("use_rag", True),
+                    options.get("use_reranker", True),
+                    options.get("rag_top_k", 12),
+                    options.get("rag_rerank_top_n", 6)
                 )
-            else:
-                # 传统问答处理流程
-                with st.spinner("🔄 AI正在分析文档并准备答案..."):
-                    run_async_in_streamlit(
-                        process_document_qa(
-                            uploaded_file,
-                            question,
-                            options.get("answer_style", "detailed"),
-                            options.get("include_quotes", True),
-                            options.get("confidence_threshold", 0.7),
-                            options.get("enable_advanced_confidence", False),
-                            options.get("use_rag", True),
-                            options.get("use_reranker", True),
-                            options.get("rag_top_k", 12),
-                            options.get("rag_rerank_top_n", 6),
-                        )
-                    )
+            )
                 
     else:
         # 上传提示
         display_upload_prompt("document")
-        
-        # Agent类型说明
-        if agent_type == "MCP智能助手":
-            display_agent_features(agent_type)
         
         # 问答示例
         display_examples("qa")
@@ -201,7 +197,9 @@ def render_document_qa_tab(agent_type, mcp_agent):
         except Exception as e:
             st.info("💡 对话报告功能需要先进行文档问答对话")
 
-def render_data_analysis_tab(agent_type, mcp_agent):
+
+
+def render_data_analysis_tab(mcp_agent):
     """渲染数据分析标签页"""
     st.header("智能数据分析")
     st.markdown("### 📁 文档上传")
@@ -232,19 +230,16 @@ def render_data_analysis_tab(agent_type, mcp_agent):
             if not analysis_requirements.strip():
                 st.warning("⚠️ 请先输入分析要求")
             else:
-                # 根据选择的Agent类型执行不同的处理流程
-                if agent_type == "MCP智能助手":
-                    if mcp_agent is None:
-                        st.error("❌ MCP智能体未初始化")
-                    else:
-                        run_async_in_streamlit(
-                            process_mcp_data_analysis(
-                                data_uploader, analysis_requirements, mcp_agent, 
-                                **data_options  # 使用字典展开，自动过滤不需要的参数
-                            )
-                        )
+                if mcp_agent is None:
+                    st.error("❌ MCP智能体未初始化")
                 else:
-                    st.warning("💡 数据分析当前仅支持MCP智能助手模式")
+                    run_async_in_streamlit(
+                        process_mcp_data_analysis(
+                            data_uploader, analysis_requirements, mcp_agent, 
+                            **data_options  # 使用字典展开，自动过滤不需要的参数
+                        )
+                    )
+
     
     else:
         # 上传提示
