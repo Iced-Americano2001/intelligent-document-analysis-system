@@ -61,6 +61,19 @@ def display_analysis_results(result: Dict[str, Any]):
         for title, fig in result["visualizations"].items():
             if fig: # 确保图表对象存在
                 st.plotly_chart(fig, use_container_width=True)
+    
+    # 显示趋势分析图表（如果有）
+    if "trend" in result and result["trend"].get("charts"):
+        st.markdown("### 📈 趋势分析图表")
+        for chart_name, chart_fig in result["trend"]["charts"].items():
+            if chart_fig:
+                st.plotly_chart(chart_fig, use_container_width=True)
+        
+        # 显示趋势分析结果
+        if result["trend"].get("trends"):
+            st.markdown("#### 📊 趋势分析结果")
+            trends_df = pd.DataFrame(result["trend"]["trends"]).T
+            st.dataframe(trends_df)
 
     # 4. 数据摘要
     with st.expander("📊 数据摘要与统计"):

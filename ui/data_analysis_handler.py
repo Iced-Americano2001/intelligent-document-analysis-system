@@ -9,8 +9,12 @@ from typing import Dict, Any
 
 logger = logging.getLogger(__name__)
 
-async def process_data_analysis(uploaded_file, analysis_type, requirements, trend_params):
+async def process_data_analysis(uploaded_file, analysis_type, requirements, trend_params, **kwargs):
     """处理数据分析"""
+    # 忽略额外的未知参数
+    if kwargs:
+        logger.warning(f"收到未知参数，将被忽略: {list(kwargs.keys())}")
+    
     progress_bar = st.progress(0, text="开始数据分析...")
     try:
         from agents.base_agent import agent_coordinator
@@ -39,6 +43,28 @@ async def process_data_analysis(uploaded_file, analysis_type, requirements, tren
         if analysis_result.get("success", False):
             display_analysis_results(analysis_result["result"])
             
+            # 为传统分析也生成智能图表
+            try:
+                from utils.chart_generator import ChartGenerator
+                
+                # 生成基于AI洞察的图表
+                ai_insights = analysis_result["result"].get("ai_insights", "")
+                if ai_insights and len(df) > 1:
+                    chart_generator = ChartGenerator(df)
+                    smart_charts = chart_generator.generate_charts_for_analysis(ai_insights)
+                    
+                    if smart_charts:
+                        st.markdown("### 🤖 AI智能图表分析")
+                        st.info(f"🎨 基于AI洞察，额外生成了 {len(smart_charts)} 个智能图表")
+                        
+                        for chart_name, chart_fig in smart_charts.items():
+                            if chart_fig:
+                                with st.expander(f"🧠 {chart_name.replace('_', ' ').title()}", expanded=False):
+                                    st.plotly_chart(chart_fig, use_container_width=True)
+                                    
+            except Exception as chart_error:
+                logger.warning(f"传统分析智能图表生成失败: {chart_error}")
+            
             # 记录对话历史
             try:
                 from utils.conversation_manager import conversation_manager
@@ -47,7 +73,8 @@ async def process_data_analysis(uploaded_file, analysis_type, requirements, tren
                     "file_name": uploaded_file.name,
                     "analysis_type": analysis_type,
                     "trend_params": trend_params,
-                    "agent_type": "传统分析"
+                    "agent_type": "传统分析",
+                    "charts_generated": len(smart_charts) if 'smart_charts' in locals() else 0
                 }
                 conversation_manager.add_conversation(
                     requirements, result_text, "data_analysis", metadata
@@ -62,8 +89,12 @@ async def process_data_analysis(uploaded_file, analysis_type, requirements, tren
 
 async def process_mcp_data_analysis(uploaded_file, analysis_requirements, mcp_agent, 
                                    max_iterations=10, show_thinking=True, confidence_threshold=0.7,
-                                   use_rag=True, use_reranker=True, rag_top_k=12, rag_rerank_top_n=6):
+                                   use_rag=True, use_reranker=True, rag_top_k=12, rag_rerank_top_n=6, **kwargs):
     """使用MCP智能体处理数据分析"""
+    # 忽略额外的未知参数
+    if kwargs:
+        logger.warning(f"收到未知参数，将被忽略: {list(kwargs.keys())}")
+    
     try:
         from config.settings import get_config
         from ui.status_manager import ConversationStatusManager, PerformanceMonitor
@@ -74,6 +105,7 @@ async def process_mcp_data_analysis(uploaded_file, analysis_requirements, mcp_ag
             retrieve_with_optional_rerank,
             build_context_from_chunks,
         )
+        from utils.chart_generator import ChartGenerator, parse_chart_requests_from_text
         
         # 进度指示
         status_manager = ConversationStatusManager()
@@ -205,6 +237,36 @@ async def process_mcp_data_analysis(uploaded_file, analysis_requirements, mcp_ag
                 final_answer = await chat_interface.display_thought_stream(thought_generator)
                 logger.info(f"数据分析思考流程完成，最终答案长度: {len(final_answer) if final_answer else 0}")
                 
+                # 生成智能图表
+                if final_answer:
+                    try:
+                        status_manager.update_step("thinking", "正在生成智能图表...")
+                        
+                        # 创建图表生成器
+                        chart_generator = ChartGenerator(df)
+                        
+                        # 基于分析结果生成图表
+                        generated_charts = chart_generator.generate_charts_for_analysis(final_answer)
+                        
+                        if generated_charts:
+                            st.markdown("### 📊 智能生成的数据图表")
+                            st.info(f"🎨 基于AI分析结果，自动生成了 {len(generated_charts)} 个图表")
+                            
+                            # 显示每个图表
+                            for chart_name, chart_fig in generated_charts.items():
+                                if chart_fig:
+                                    # 创建可折叠的图表区域
+                                    with st.expander(f"📈 {chart_name.replace('_', ' ').title()}", expanded=True):
+                                        st.plotly_chart(chart_fig, use_container_width=True)
+                            
+                            logger.info(f"成功生成并显示了 {len(generated_charts)} 个图表")
+                        else:
+                            st.info("💡 未生成图表，可能是数据格式不适合可视化")
+                    
+                    except Exception as chart_error:
+                        logger.warning(f"图表生成失败，但分析继续: {chart_error}")
+                        st.warning("⚠️ 图表生成遇到问题，但分析结果已完成")
+                
             except Exception as e:
                 logger.error(f"MCP数据分析思考流程执行失败: {e}")
                 import traceback
@@ -233,7 +295,8 @@ async def process_mcp_data_analysis(uploaded_file, analysis_requirements, mcp_ag
                     "use_rag": use_rag,
                     "use_reranker": use_reranker,
                     "agent_type": "MCP智能助手",
-                    "data_shape": f"{df.shape[0]}行×{df.shape[1]}列"
+                    "data_shape": f"{df.shape[0]}行×{df.shape[1]}列",
+                    "charts_generated": len(generated_charts) if 'generated_charts' in locals() else 0
                 }
                 conversation_manager.add_conversation(
                     analysis_requirements, final_answer or "分析完成", "data_analysis", metadata
@@ -263,6 +326,21 @@ async def process_mcp_data_analysis(uploaded_file, analysis_requirements, mcp_ag
                     st.markdown("### 🎯 数据分析结果")
                     st.write(result["answer"])
                     
+                    # 生成智能图表（简化模式）
+                    try:
+                        from utils.chart_generator import ChartGenerator
+                        chart_generator = ChartGenerator(df)
+                        generated_charts = chart_generator.generate_charts_for_analysis(result["answer"])
+                        
+                        if generated_charts:
+                            st.markdown("### 📊 自动生成的数据图表")
+                            for chart_name, chart_fig in generated_charts.items():
+                                if chart_fig:
+                                    with st.expander(f"📈 {chart_name.replace('_', ' ').title()}", expanded=False):
+                                        st.plotly_chart(chart_fig, use_container_width=True)
+                    except Exception as chart_error:
+                        logger.warning(f"简化模式图表生成失败: {chart_error}")
+                    
                     # 显示简化的结果信息
                     col1, col2, col3 = st.columns(3)
                     with col1:
@@ -283,7 +361,8 @@ async def process_mcp_data_analysis(uploaded_file, analysis_requirements, mcp_ag
                             "use_reranker": use_reranker,
                             "agent_type": "MCP智能助手(简化模式)",
                             "data_shape": f"{df.shape[0]}行×{df.shape[1]}列",
-                            "iterations_used": result.get("iterations_used", 0)
+                            "iterations_used": result.get("iterations_used", 0),
+                            "charts_generated": len(generated_charts) if 'generated_charts' in locals() else 0
                         }
                         conversation_manager.add_conversation(
                             analysis_requirements, result["answer"], "data_analysis", metadata

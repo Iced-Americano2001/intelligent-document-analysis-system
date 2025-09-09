@@ -145,6 +145,7 @@ class ConversationContext(BaseModel):
     current_iteration: int = Field(default=0)
     is_completed: bool = Field(default=False)
     final_answer: Optional[str] = None
+    trend_params: Optional[Dict[str, Any]] = Field(default=None)  # 趋势分析参数
     
     def add_message(self, role: MessageRole, content: str, **kwargs):
         """添加消息到聊天历史"""

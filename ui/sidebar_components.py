@@ -116,3 +116,5 @@ def render_data_analysis_options():
     options["rag_rerank_top_n"] = st.slider("重排后片段数", 2, 10, 4, key="data_rag_rerank_n")
     
     return options
+    
+    return options

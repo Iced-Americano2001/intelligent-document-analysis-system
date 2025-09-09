@@ -420,7 +420,7 @@ class DataVisualizationTool(BaseTool):
     
     async def execute(self, data: str, chart_type: str = "auto", 
                      x_column: str = None, y_column: str = None) -> Dict[str, Any]:
-        """生成可视化建议"""
+        """生成可视化建议和图表代码"""
         try:
             # 解析数据
             import json
@@ -428,21 +428,32 @@ class DataVisualizationTool(BaseTool):
             df = pd.DataFrame(json_data)
             
             recommendations = []
+            chart_code = []
             
             # 自动推荐图表类型
             if chart_type == "auto":
                 recommendations.extend(self._auto_recommend_charts(df))
+                # 为每个推荐的图表生成Plotly代码
+                for rec in recommendations:
+                    code = self._generate_plotly_code(df, rec)
+                    if code:
+                        chart_code.append(code)
             else:
                 config = self._generate_chart_config(df, chart_type, x_column, y_column)
                 if config:
                     recommendations.append(config)
+                    code = self._generate_plotly_code(df, config)
+                    if code:
+                        chart_code.append(code)
             
             return {
                 "data_shape": df.shape,
                 "columns": list(df.columns),
-                "data_types": df.dtypes.to_dict(),
+                "data_types": {k: str(v) for k, v in df.dtypes.to_dict().items()},
                 "chart_recommendations": recommendations,
-                "total_recommendations": len(recommendations)
+                "chart_code": chart_code,
+                "total_recommendations": len(recommendations),
+                "visualization_summary": self._generate_visualization_summary(df, recommendations)
             }
             
         except Exception as e:
@@ -536,3 +547,96 @@ class DataVisualizationTool(BaseTool):
             config["config"]["y"] = y_column
         
         return config
+    
+    def _generate_plotly_code(self, df: pd.DataFrame, chart_config: Dict[str, Any]) -> Optional[str]:
+        """生成Plotly图表代码"""
+        try:
+            chart_type = chart_config.get("chart_type")
+            config = chart_config.get("config", {})
+            
+            if chart_type == "histogram":
+                x_col = config.get("x")
+                return f"""
+# {chart_config.get('title', '直方图')}
+import plotly.express as px
+fig = px.histogram(df, x='{x_col}', title='{config.get("title", f"{x_col}分布直方图")}', template='plotly_white')
+fig.show()
+"""
+            
+            elif chart_type == "scatter":
+                x_col = config.get("x")
+                y_col = config.get("y")
+                return f"""
+# {chart_config.get('title', '散点图')}
+import plotly.express as px
+fig = px.scatter(df, x='{x_col}', y='{y_col}', title='{config.get("title", f"{x_col} vs {y_col}")}', 
+                template='plotly_white', trendline='ols')
+fig.show()
+"""
+            
+            elif chart_type == "bar":
+                x_col = config.get("x")
+                return f"""
+# {chart_config.get('title', '条形图')}
+import plotly.express as px
+value_counts = df['{x_col}'].value_counts()
+fig = px.bar(x=value_counts.index, y=value_counts.values, 
+            title='{config.get("title", f"{x_col}分布条形图")}', template='plotly_white')
+fig.update_xaxis(title='{x_col}')
+fig.update_yaxis(title='频次')
+fig.show()
+"""
+            
+            elif chart_type == "heatmap":
+                return f"""
+# {chart_config.get('title', '相关性热力图')}
+import plotly.express as px
+numeric_cols = df.select_dtypes(include=['number']).columns
+corr_matrix = df[numeric_cols].corr()
+fig = px.imshow(corr_matrix, text_auto=True, aspect="auto", 
+               title='数值变量相关性热力图', template='plotly_white')
+fig.show()
+"""
+            
+            elif chart_type == "line":
+                y_col = config.get("y", df.select_dtypes(include=['number']).columns[0])
+                return f"""
+# {chart_config.get('title', '折线图')}
+import plotly.express as px
+fig = px.line(df, y='{y_col}', title='{config.get("title", f"{y_col}趋势图")}', 
+             template='plotly_white', markers=True)
+fig.show()
+"""
+            
+            return None
+            
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).error(f"生成Plotly代码失败: {e}")
+            return None
+    
+    def _generate_visualization_summary(self, df: pd.DataFrame, recommendations: List[Dict[str, Any]]) -> str:
+        """生成可视化总结"""
+        numeric_cols = len(df.select_dtypes(include=['number']).columns)
+        categorical_cols = len(df.select_dtypes(include=['object']).columns)
+        
+        summary = f"""
+数据可视化分析建议：
+
+数据概况：
+- 数据形状：{df.shape[0]}行 × {df.shape[1]}列
+- 数值型变量：{numeric_cols}个
+- 分类型变量：{categorical_cols}个
+
+推荐的图表类型：
+"""
+        
+        for i, rec in enumerate(recommendations, 1):
+            chart_type = rec.get('chart_type', '未知')
+            title = rec.get('title', '未命名图表')
+            description = rec.get('description', '无描述')
+            summary += f"{i}. {chart_type.upper()}图 - {title}\n   {description}\n"
+        
+        summary += f"\n总计推荐 {len(recommendations)} 个图表，涵盖数据分布、关系分析和趋势展示。"
+        
+        return summary

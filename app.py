@@ -240,13 +240,7 @@ def render_data_analysis_tab(agent_type, mcp_agent):
                         run_async_in_streamlit(
                             process_mcp_data_analysis(
                                 data_uploader, analysis_requirements, mcp_agent, 
-                                max_iterations=data_options.get("max_iterations", 10),
-                                show_thinking=data_options.get("show_thinking", True),
-                                confidence_threshold=data_options.get("confidence_threshold", 0.7),
-                                use_rag=data_options.get("use_rag", True),
-                                use_reranker=data_options.get("use_reranker", True),
-                                rag_top_k=data_options.get("rag_top_k", 8),
-                                rag_rerank_top_n=data_options.get("rag_rerank_top_n", 4)
+                                **data_options  # 使用字典展开，自动过滤不需要的参数
                             )
                         )
                 else:

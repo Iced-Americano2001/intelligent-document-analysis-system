@@ -23,6 +23,8 @@ numpy>=1.24.0
 matplotlib>=3.7.0
 seaborn>=0.12.0
 plotly>=5.17.0
+statsmodels>=0.14.0       # 统计分析和时间序列分析
+scipy>=1.10.0             # 科学计算和统计函数
 
 # 工具库
 requests>=2.27.0
