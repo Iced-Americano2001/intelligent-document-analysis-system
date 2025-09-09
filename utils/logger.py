@@ -238,19 +238,19 @@ def setup_debug_logging():
     )
 
 
-def log_system_info():
-    """记录系统信息"""
-    import platform
-    import psutil
+# def log_system_info():
+#     """记录系统信息"""
+#     import platform
+#     import psutil
     
-    mcp_logger.info(f"系统信息: {platform.system()} {platform.release()}")
-    mcp_logger.info(f"Python版本: {sys.version}")
-    mcp_logger.info(f"内存使用: {psutil.virtual_memory().percent}%")
-    mcp_logger.info(f"CPU使用: {psutil.cpu_percent()}%")
+#     mcp_logger.info(f"系统信息: {platform.system()} {platform.release()}")
+#     mcp_logger.info(f"Python版本: {sys.version}")
+#     mcp_logger.info(f"内存使用: {psutil.virtual_memory().percent}%")
+#     mcp_logger.info(f"CPU使用: {psutil.cpu_percent()}%")
 
 
-# 启动时记录系统信息
-try:
-    log_system_info()
-except ImportError:
-    mcp_logger.warning("psutil未安装，无法获取系统性能信息")
+# # 启动时记录系统信息
+# try:
+#     log_system_info()
+# except ImportError:
+#     mcp_logger.warning("psutil未安装，无法获取系统性能信息")
