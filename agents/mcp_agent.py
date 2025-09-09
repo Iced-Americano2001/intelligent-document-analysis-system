@@ -162,8 +162,7 @@ class MCPAgent(BaseAgent):
     
     @log_async_generator(agent_logger)
     async def think_and_act(self, user_query: str, document_content: str = None, 
-                          document_type: str = None, document_file_path: str = None,
-                          trend_params: Dict[str, Any] = None) -> AsyncIterator[ThoughtProcess]:
+                          document_type: str = None, document_file_path: str = None) -> AsyncIterator[ThoughtProcess]:
         """思考并执行的主循环"""
         
         agent_logger.info("开始MCP智能体思考流程", 
@@ -179,8 +178,7 @@ class MCPAgent(BaseAgent):
             document_type=document_type,
             document_file_path=document_file_path,
             available_tools=self.available_tools,
-            max_iterations=self.max_iterations,
-            trend_params=trend_params  # 添加趋势分析参数
+            max_iterations=self.max_iterations
         )
         
         self.current_iteration = 0
@@ -398,11 +396,6 @@ class MCPAgent(BaseAgent):
                         parameters = {**parameters, "file_path": ctx_fp}
                         agent_logger.info("已自动注入上下文中的 document_file_path 到 document_parser 参数", file_path=ctx_fp)
 
-                # 如果是 data_analysis 工具，自动注入趋势参数
-                if tool_name == "data_analysis" and self.conversation_context and self.conversation_context.trend_params:
-                    parameters = {**parameters, "trend_params": self.conversation_context.trend_params}
-                    agent_logger.info("已自动注入趋势参数到 data_analysis 工具", trend_params=self.conversation_context.trend_params)
-
                 result = await tool.safe_execute(**parameters)
                 logger.info(f"本地工具执行成功: {tool_name}")
                 return result
@@ -499,7 +492,6 @@ class MCPAgent(BaseAgent):
         document_content = input_data.get("document_content", "")
         document_type = input_data.get("document_type", "")
         document_file_path = input_data.get("document_file_path") or (context or {}).get("document_file_path") if context else None
-        trend_params = input_data.get("trend_params")  # 获取趋势分析参数
         
         if not user_query:
             raise ValueError("问题不能为空")
@@ -511,7 +503,7 @@ class MCPAgent(BaseAgent):
         thought_processes = []
         final_answer = ""
         
-        async for thought in self.think_and_act(user_query, document_content, document_type, document_file_path, trend_params):
+        async for thought in self.think_and_act(user_query, document_content, document_type, document_file_path):
             thought_processes.append(thought.model_dump())
             
             if thought.type == ThoughtType.FINAL_ANSWER:

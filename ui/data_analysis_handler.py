@@ -76,8 +76,10 @@ async def process_data_analysis(uploaded_file, analysis_type, requirements, tren
                     "agent_type": "传统分析",
                     "charts_generated": len(smart_charts) if 'smart_charts' in locals() else 0
                 }
+                # 传递图表数据到对话管理器
+                charts_to_save = smart_charts if 'smart_charts' in locals() else {}
                 conversation_manager.add_conversation(
-                    requirements, result_text, "data_analysis", metadata
+                    requirements, result_text, "data_analysis", metadata, charts_to_save
                 )
             except Exception as e:
                 logger.warning(f"记录对话历史失败: {e}")
@@ -298,8 +300,10 @@ async def process_mcp_data_analysis(uploaded_file, analysis_requirements, mcp_ag
                     "data_shape": f"{df.shape[0]}行×{df.shape[1]}列",
                     "charts_generated": len(generated_charts) if 'generated_charts' in locals() else 0
                 }
+                # 传递图表数据到对话管理器
+                charts_to_save = generated_charts if 'generated_charts' in locals() else {}
                 conversation_manager.add_conversation(
-                    analysis_requirements, final_answer or "分析完成", "data_analysis", metadata
+                    analysis_requirements, final_answer or "分析完成", "data_analysis", metadata, charts_to_save
                 )
             except Exception as e:
                 logger.warning(f"记录对话历史失败: {e}")
@@ -364,8 +368,10 @@ async def process_mcp_data_analysis(uploaded_file, analysis_requirements, mcp_ag
                             "iterations_used": result.get("iterations_used", 0),
                             "charts_generated": len(generated_charts) if 'generated_charts' in locals() else 0
                         }
+                        # 传递图表数据到对话管理器
+                        charts_to_save = generated_charts if 'generated_charts' in locals() else {}
                         conversation_manager.add_conversation(
-                            analysis_requirements, result["answer"], "data_analysis", metadata
+                            analysis_requirements, result["answer"], "data_analysis", metadata, charts_to_save
                         )
                     except Exception as e:
                         logger.warning(f"记录对话历史失败: {e}")

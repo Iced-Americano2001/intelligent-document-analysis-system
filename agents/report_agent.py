@@ -92,6 +92,8 @@ class ReportAgent:
             question_types = {}
             avg_response_length = 0
             response_lengths = []
+            total_charts = 0
+            chart_types = {}
             
             topics = set()
             keywords = set()
@@ -117,6 +119,15 @@ class ReportAgent:
                     # 提取主题
                     extracted_topics = self._extract_topics(answer_text)
                     topics.update(extracted_topics)
+                    
+                    # 分析图表信息
+                    charts = conv.get("charts", {})
+                    if charts:
+                        total_charts += len(charts)
+                        for chart_name in charts.keys():
+                            # 分析图表类型
+                            chart_type = self._classify_chart_type(chart_name)
+                            chart_types[chart_type] = chart_types.get(chart_type, 0) + 1
             
             if response_lengths:
                 avg_response_length = sum(response_lengths) / len(response_lengths)
@@ -128,16 +139,43 @@ class ReportAgent:
                     "question_types": question_types,
                     "avg_response_length": round(avg_response_length, 2),
                     "topics_covered": len(topics),
-                    "keywords_extracted": len(keywords)
+                    "keywords_extracted": len(keywords),
+                    "total_charts": total_charts,
+                    "chart_types": chart_types
                 },
                 "topics": list(topics),
                 "keywords": list(keywords),
-                "question_types_detail": question_types
+                "question_types_detail": question_types,
+                "chart_statistics": {
+                    "total_charts": total_charts,
+                    "chart_types": chart_types
+                }
             }
             
         except Exception as e:
             logger.error(f"分析对话历史失败: {e}")
-            return {"statistics": {}, "topics": [], "keywords": [], "question_types_detail": {}}
+            return {"statistics": {}, "topics": [], "keywords": [], "question_types_detail": {}, "chart_statistics": {}}
+    
+    def _classify_chart_type(self, chart_name: str) -> str:
+        """分类图表类型"""
+        chart_name_lower = chart_name.lower()
+        
+        if any(keyword in chart_name_lower for keyword in ["trend", "趋势", "time", "时间"]):
+            return "趋势分析图"
+        elif any(keyword in chart_name_lower for keyword in ["distribution", "分布", "hist", "直方图"]):
+            return "分布分析图"
+        elif any(keyword in chart_name_lower for keyword in ["correlation", "相关", "scatter", "散点"]):
+            return "相关性分析图"
+        elif any(keyword in chart_name_lower for keyword in ["box", "箱线", "violin", "小提琴"]):
+            return "箱线图/小提琴图"
+        elif any(keyword in chart_name_lower for keyword in ["regression", "回归", "linear"]):
+            return "回归分析图"
+        elif any(keyword in chart_name_lower for keyword in ["qq", "normal", "正态"]):
+            return "统计检验图"
+        elif any(keyword in chart_name_lower for keyword in ["compare", "对比", "bar", "柱状"]):
+            return "对比分析图"
+        else:
+            return "其他图表"
     
     def _classify_question_type(self, question: str, analysis_type: str) -> str:
         """分类问题类型"""
@@ -253,6 +291,7 @@ class ReportAgent:
         """生成执行摘要"""
         stats = analysis_result.get("statistics", {})
         topics = analysis_result.get("topics", [])
+        chart_stats = analysis_result.get("chart_statistics", {})
         
         type_name = "文档问答" if analysis_type == "document_qa" else "数据分析"
         
@@ -264,6 +303,7 @@ class ReportAgent:
 - 总回答数：{stats.get('total_answers', 0)}个
 - 平均回答长度：{stats.get('avg_response_length', 0)}字符
 - 涉及主题：{len(topics)}个
+- 生成图表：{chart_stats.get('total_charts', 0)}个
 
 **主要发现：**
 """
@@ -277,6 +317,14 @@ class ReportAgent:
         if question_types:
             most_common_type = max(question_types.items(), key=lambda x: x[1])
             summary += f"- 最常见的问题类型是：{most_common_type[0]} ({most_common_type[1]}次)\n"
+        
+        # 添加图表分析
+        if chart_stats.get("total_charts", 0) > 0:
+            chart_types = chart_stats.get("chart_types", {})
+            if chart_types:
+                most_common_chart = max(chart_types.items(), key=lambda x: x[1])
+                summary += f"- 最常生成的图表类型是：{most_common_chart[0]} ({most_common_chart[1]}个)\n"
+            summary += f"- 总共生成了{chart_stats.get('total_charts', 0)}个数据可视化图表\n"
         
         return summary.strip()
     
@@ -294,13 +342,15 @@ class ReportAgent:
                 if current_question and not qa_pairs:
                     qa_pairs.append({
                         "question": current_question,
-                        "answer": "未找到对应回答"
+                        "answer": "未找到对应回答",
+                        "charts": {}
                     })
                 current_question = conv.get("content", "")
             elif conv.get("type") == "answer" and current_question:
                 qa_pairs.append({
                     "question": current_question,
-                    "answer": conv.get("content", "")
+                    "answer": conv.get("content", ""),
+                    "charts": conv.get("charts", {})  # 包含图表数据
                 })
                 current_question = None
         
@@ -309,6 +359,15 @@ class ReportAgent:
             "type": "qa_pairs",
             "content": qa_pairs
         })
+        
+        # 图表统计章节
+        chart_stats = analysis_result.get("chart_statistics", {})
+        if chart_stats.get("total_charts", 0) > 0:
+            content_sections.append({
+                "title": "图表分析统计",
+                "type": "chart_statistics",
+                "content": chart_stats
+            })
         
         # 主题分析章节
         topics = analysis_result.get("topics", [])

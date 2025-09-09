@@ -8,8 +8,71 @@ from typing import Dict, Any, List
 import asyncio
 from datetime import datetime
 import base64
+from pathlib import Path
 
 logger = logging.getLogger(__name__)
+
+def _display_content_sections_basic(sections: List[Dict]):
+    """基础的内容区段显示方法"""
+    for section in sections:
+        st.markdown(f"#### {section.get('title', '')}")
+        
+        if section.get("type") == "qa_pairs":
+            for i, qa in enumerate(section.get("content", []), 1):
+                with st.expander(f"问答 {i}: {qa.get('question', '')[:50]}...", expanded=False):
+                    st.markdown(f"**问题:** {qa.get('question', '')}")
+                    st.markdown(f"**回答:** {qa.get('answer', '')}")
+                    
+                    # 显示相关图表（基础方式）
+                    charts = qa.get("charts", {})
+                    if charts:
+                        st.markdown("**生成的图表:**")
+                        for chart_name, chart_json in charts.items():
+                            try:
+                                # 从JSON重建图表
+                                import plotly.graph_objects as go
+                                import json
+                                chart_data = json.loads(chart_json)
+                                fig = go.Figure(chart_data)
+                                
+                                st.plotly_chart(fig, use_container_width=True)
+                                st.caption(f"图表: {chart_name.replace('_', ' ').title()}")
+                            except Exception as e:
+                                st.warning(f"图表 {chart_name} 显示失败: {str(e)}")
+        
+        elif section.get("type") == "chart_statistics":
+            chart_stats = section.get("content", {})
+            total_charts = chart_stats.get("total_charts", 0)
+            chart_types = chart_stats.get("chart_types", {})
+            
+            col1, col2 = st.columns(2)
+            with col1:
+                st.metric("总图表数", total_charts)
+            with col2:
+                st.metric("图表类型数", len(chart_types))
+            
+            if chart_types:
+                st.markdown("**图表类型分布:**")
+                for chart_type, count in chart_types.items():
+                    st.markdown(f"- {chart_type}: {count}个")
+        
+        elif section.get("type") in ["bullet_list", "numbered_list"]:
+            for item in section.get("content", []):
+                st.markdown(f"• {item}")
+        
+        elif section.get("type") == "topics":
+            topics = section.get("content", [])
+            if topics:
+                # 以标签形式显示主题
+                topic_html = " ".join([f'<span style="background-color: #e1f5fe; padding: 4px 8px; border-radius: 12px; margin: 2px; display: inline-block;">{topic}</span>' for topic in topics])
+                st.markdown(topic_html, unsafe_allow_html=True)
+        
+        elif section.get("type") == "keywords":
+            keywords = section.get("content", [])
+            if keywords:
+                # 以标签形式显示关键词
+                keyword_html = " ".join([f'<span style="background-color: #f3e5f5; padding: 4px 8px; border-radius: 12px; margin: 2px; display: inline-block;">{keyword}</span>' for keyword in keywords])
+                st.markdown(keyword_html, unsafe_allow_html=True)
 
 def render_conversation_report_section(conversation_type: str = "document_qa"):
     """
@@ -47,6 +110,36 @@ def render_conversation_report_section(conversation_type: str = "document_qa"):
         with col4:
             avg_answer_len = stats.get("avg_answer_length", 0)
             st.metric("平均回答长度", f"{avg_answer_len:.0f}字符")
+        
+        # 显示图表统计（如果是数据分析报告）
+        if conversation_type == "data_analysis":
+            try:
+                from utils.chart_report_enhancer import ChartReportEnhancer
+                chart_enhancer = ChartReportEnhancer()
+                chart_stats = chart_enhancer.analyze_chart_statistics(history)
+                
+                if chart_stats.get("total_charts", 0) > 0:
+                    with st.expander("📊 图表统计概览", expanded=False):
+                        chart_enhancer.display_chart_statistics_dashboard(chart_stats)
+                    
+                    # 提供批量导出图表选项
+                    with st.expander("📦 批量导出图表", expanded=False):
+                        if st.button("📥 导出所有图表为ZIP", type="primary", key=f"export_charts_{conversation_type}"):
+                            zip_path = chart_enhancer.export_all_charts_as_zip(history)
+                            if zip_path:
+                                st.success(f"✅ 图表已导出到: {zip_path}")
+                                # 提供下载链接
+                                with open(zip_path, "rb") as f:
+                                    st.download_button(
+                                        label="💾 下载图表ZIP文件",
+                                        data=f.read(),
+                                        file_name=Path(zip_path).name,
+                                        mime="application/zip"
+                                    )
+                            else:
+                                st.error("❌ 图表导出失败")
+            except Exception as e:
+                logger.warning(f"图表功能加载失败: {e}")
         
         # 报告选项
         with st.expander("🔧 报告生成选项", expanded=False):
@@ -192,32 +285,37 @@ def display_generated_report(report_data: Dict[str, Any]):
         if content.get("main_content"):
             st.markdown("### 📖 详细内容")
             
+            # 检查是否有图表内容，如果有则使用增强显示
+            has_charts = False
+            qa_pairs_with_charts = []
+            
             for section in content["main_content"]:
-                st.markdown(f"#### {section.get('title', '')}")
-                
                 if section.get("type") == "qa_pairs":
-                    for i, qa in enumerate(section.get("content", []), 1):
-                        with st.expander(f"问答 {i}: {qa.get('question', '')[:50]}...", expanded=False):
-                            st.markdown(f"**问题:** {qa.get('question', '')}")
-                            st.markdown(f"**回答:** {qa.get('answer', '')}")
-                
-                elif section.get("type") in ["bullet_list", "numbered_list"]:
-                    for item in section.get("content", []):
-                        st.markdown(f"• {item}")
-                
-                elif section.get("type") == "topics":
-                    topics = section.get("content", [])
-                    if topics:
-                        # 以标签形式显示主题
-                        topic_html = " ".join([f'<span style="background-color: #e1f5fe; padding: 4px 8px; border-radius: 12px; margin: 2px; display: inline-block;">{topic}</span>' for topic in topics])
-                        st.markdown(topic_html, unsafe_allow_html=True)
-                
-                elif section.get("type") == "keywords":
-                    keywords = section.get("content", [])
-                    if keywords:
-                        # 以标签形式显示关键词
-                        keyword_html = " ".join([f'<span style="background-color: #f3e5f5; padding: 4px 8px; border-radius: 12px; margin: 2px; display: inline-block;">{keyword}</span>' for keyword in keywords])
-                        st.markdown(keyword_html, unsafe_allow_html=True)
+                    qa_pairs = section.get("content", [])
+                    for qa in qa_pairs:
+                        if qa.get("charts"):
+                            has_charts = True
+                            qa_pairs_with_charts.extend(qa_pairs)
+                            break
+                    if has_charts:
+                        break
+            
+            # 如果有图表，使用图表增强器显示
+            if has_charts:
+                try:
+                    from utils.chart_report_enhancer import ChartReportEnhancer
+                    chart_enhancer = ChartReportEnhancer()
+                    
+                    st.markdown("#### 📊 包含图表的问答内容")
+                    chart_enhancer.display_charts_in_report(qa_pairs_with_charts, expanded=False)
+                    
+                except Exception as e:
+                    logger.warning(f"图表增强显示失败，回退到基础显示: {e}")
+                    # 回退到原有显示方式
+                    _display_content_sections_basic(content["main_content"])
+            else:
+                # 没有图表时使用基础显示
+                _display_content_sections_basic(content["main_content"])
         
         # 结论
         if content.get("conclusions"):

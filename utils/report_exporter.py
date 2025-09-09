@@ -9,6 +9,9 @@ import json
 from datetime import datetime
 import tempfile
 import base64
+import plotly.graph_objects as go
+import plotly.io as pio
+from utils.chart_converter import ChartConverter
 
 logger = logging.getLogger(__name__)
 
@@ -17,6 +20,7 @@ class ReportExporter:
     
     def __init__(self):
         self.supported_formats = ["html", "docx", "json"]
+        self.chart_converter = ChartConverter()
         # PDF导出需要额外的依赖，暂时不包含
     
     def export_report(self, report_data: Dict[str, Any], format_type: str, 
@@ -157,7 +161,50 @@ class ReportExporter:
                             doc.add_heading(f"问答 {i}", level=3)
                             doc.add_paragraph(f"问题：{qa.get('question', '')}")
                             doc.add_paragraph(f"回答：{qa.get('answer', '')}")
+                            
+                            # 添加图表信息
+                            charts = qa.get("charts", {})
+                            if charts:
+                                doc.add_paragraph("相关图表：", style='Heading 4')
+                                for chart_name, chart_json in charts.items():
+                                    try:
+                                        # 获取图表摘要信息
+                                        chart_summary = self.chart_converter.extract_chart_summary(chart_json)
+                                        
+                                        chart_desc = f"• {chart_name.replace('_', ' ').title()}"
+                                        if chart_summary.get("chart_type"):
+                                            chart_desc += f" ({chart_summary['chart_type']})"
+                                        
+                                        doc.add_paragraph(chart_desc, style='List Bullet')
+                                        
+                                        # 添加图表详细信息
+                                        if chart_summary.get("title"):
+                                            doc.add_paragraph(f"  标题: {chart_summary['title']}", style='Body Text')
+                                        if chart_summary.get("data_points"):
+                                            doc.add_paragraph(f"  数据点: {chart_summary['data_points']}个", style='Body Text')
+                                        if chart_summary.get("x_axis"):
+                                            doc.add_paragraph(f"  X轴: {chart_summary['x_axis']}", style='Body Text')
+                                        if chart_summary.get("y_axis"):
+                                            doc.add_paragraph(f"  Y轴: {chart_summary['y_axis']}", style='Body Text')
+                                        
+                                        # 添加说明
+                                        doc.add_paragraph(f"  [完整交互式图表请查看HTML版本报告]", style='Body Text')
+                                    except Exception as e:
+                                        logger.warning(f"Word文档中图表{chart_name}处理失败: {e}")
+                                        doc.add_paragraph(f"• {chart_name.replace('_', ' ').title()} [处理失败]", style='List Bullet')
+                            
                             doc.add_paragraph("")  # 空行
+                    
+                    elif section.get("type") == "chart_statistics":
+                        chart_stats = section.get("content", {})
+                        total_charts = chart_stats.get("total_charts", 0)
+                        chart_types = chart_stats.get("chart_types", {})
+                        
+                        doc.add_paragraph(f"总图表数：{total_charts}")
+                        if chart_types:
+                            doc.add_paragraph("图表类型分布：")
+                            for chart_type, count in chart_types.items():
+                                doc.add_paragraph(f"• {chart_type}: {count}个", style='List Bullet')
                     
                     elif section.get("type") in ["bullet_list", "numbered_list"]:
                         for item in section.get("content", []):
@@ -222,6 +269,7 @@ class ReportExporter:
                     base_filename: str) -> Dict[str, Any]:
         """导出为JSON格式"""
         try:
+            # JSON格式天然支持复杂数据结构，包括图表JSON数据
             # 保存文件
             file_path = output_dir / f"{base_filename}.json"
             with open(file_path, "w", encoding="utf-8") as f:
@@ -338,6 +386,38 @@ class ReportExporter:
             background-color: #34495e;
             color: white;
         }}
+        .charts-section {{
+            margin-top: 15px;
+            padding: 15px;
+            background-color: #f8f9fa;
+            border-radius: 5px;
+            border-left: 4px solid #007bff;
+        }}
+        .chart-container {{
+            margin: 15px 0;
+            padding: 10px;
+            background-color: white;
+            border-radius: 3px;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+        }}
+        .chart-container h5 {{
+            margin: 0 0 10px 0;
+            color: #495057;
+            font-size: 1rem;
+        }}
+        .chart-error {{
+            color: #dc3545;
+            font-style: italic;
+            padding: 10px;
+            background-color: #f8d7da;
+            border-radius: 3px;
+        }}
+        .chart-stats {{
+            background-color: #e9ecef;
+            padding: 15px;
+            border-radius: 5px;
+            margin: 10px 0;
+        }}
         ul {{
             padding-left: 20px;
         }}
@@ -408,8 +488,42 @@ class ReportExporter:
         <div class="qa-pair">
             <div class="question">问题 {i}：{qa.get('question', '')}</div>
             <div class="answer">{qa.get('answer', '').replace(chr(10), '<br>')}</div>
-        </div>
 """
+                        # 添加图表
+                        charts = qa.get("charts", {})
+                        if charts:
+                            html += '<div class="charts-section"><h4>相关图表：</h4>'
+                            for chart_name, chart_json in charts.items():
+                                try:
+                                    # 使用图表转换器将图表转换为HTML
+                                    chart_html = self.chart_converter.chart_to_html(
+                                        chart_json, 
+                                        div_id=f"chart_{i}_{chart_name}",
+                                        include_plotlyjs='inline'
+                                    )
+                                    if chart_html:
+                                        html += f'<div class="chart-container"><h5>{chart_name.replace("_", " ").title()}</h5>{chart_html}</div>'
+                                    else:
+                                        html += f'<p class="chart-error">图表 {chart_name} 显示失败</p>'
+                                except Exception as e:
+                                    logger.warning(f"图表{chart_name}转换失败: {e}")
+                                    html += f'<p class="chart-error">图表 {chart_name} 显示失败: {str(e)}</p>'
+                            html += '</div>'
+                        
+                        html += '</div>'
+
+                elif section.get("type") == "chart_statistics":
+                    chart_stats = section.get("content", {})
+                    total_charts = chart_stats.get("total_charts", 0)
+                    chart_types = chart_stats.get("chart_types", {})
+                    
+                    html += f'<div class="chart-stats"><p><strong>总图表数：</strong>{total_charts}</p>'
+                    if chart_types:
+                        html += '<p><strong>图表类型分布：</strong></p><ul>'
+                        for chart_type, count in chart_types.items():
+                            html += f'<li>{chart_type}: {count}个</li>'
+                        html += '</ul>'
+                    html += '</div>'
                 
                 elif section.get("type") in ["bullet_list", "numbered_list"]:
                     list_type = "ul" if section.get("type") == "bullet_list" else "ol"

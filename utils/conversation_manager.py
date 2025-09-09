@@ -20,7 +20,7 @@ class ConversationHistoryManager:
         self.max_history_length = 100  # 最大历史记录数量
     
     def add_conversation(self, question: str, answer: str, conversation_type: str = "document_qa", 
-                        metadata: Dict = None):
+                        metadata: Dict = None, charts: Dict = None):
         """
         添加对话记录
         
@@ -29,6 +29,7 @@ class ConversationHistoryManager:
             answer: 系统回答
             conversation_type: 对话类型 ('document_qa' 或 'data_analysis')
             metadata: 附加元数据
+            charts: 生成的图表数据 (plotly图表对象的字典)
         """
         try:
             session_key = self.session_key_qa if conversation_type == "document_qa" else self.session_key_data
@@ -39,12 +40,24 @@ class ConversationHistoryManager:
             
             timestamp = datetime.now().isoformat()
             
+            # 处理图表数据
+            chart_data = {}
+            if charts:
+                for chart_name, chart_fig in charts.items():
+                    if chart_fig:
+                        try:
+                            # 将图表转换为JSON格式存储
+                            chart_data[chart_name] = chart_fig.to_json()
+                        except Exception as e:
+                            logger.warning(f"图表{chart_name}序列化失败: {e}")
+            
             # 添加问题记录
             question_record = {
                 "type": "question",
                 "content": question,
                 "timestamp": timestamp,
-                "metadata": metadata or {}
+                "metadata": metadata or {},
+                "charts": {}  # 问题不包含图表
             }
             
             # 添加回答记录
@@ -52,7 +65,8 @@ class ConversationHistoryManager:
                 "type": "answer", 
                 "content": answer,
                 "timestamp": timestamp,
-                "metadata": metadata or {}
+                "metadata": metadata or {},
+                "charts": chart_data  # 回答包含生成的图表
             }
             
             # 添加到历史记录
@@ -62,7 +76,7 @@ class ConversationHistoryManager:
             if len(st.session_state[session_key]) > self.max_history_length:
                 st.session_state[session_key] = st.session_state[session_key][-self.max_history_length:]
             
-            logger.info(f"已添加{conversation_type}对话记录")
+            logger.info(f"已添加{conversation_type}对话记录，包含{len(chart_data)}个图表")
             
         except Exception as e:
             logger.error(f"添加对话记录失败: {e}", exc_info=True)
