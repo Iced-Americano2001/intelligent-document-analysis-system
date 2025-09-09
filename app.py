@@ -9,7 +9,7 @@ from pathlib import Path
 from ui.app_config import setup_page_config, setup_asyncio, setup_logging, setup_session_state
 from ui.async_utils import run_async_in_streamlit
 from ui.initialization import initialize_services, initialize_mcp_agent
-from ui.sidebar_components import render_sidebar, render_advanced_options, render_mcp_options, render_data_analysis_options
+from ui.sidebar_components import render_sidebar, render_advanced_options, render_data_analysis_options
 from ui.result_display import display_file_info, display_upload_prompt, display_examples, display_agent_features
 from ui.document_qa_handler import process_document_qa, process_mcp_qa
 from ui.data_analysis_handler import process_mcp_data_analysis
@@ -108,7 +108,7 @@ def render_document_qa_tab(mcp_agent):
         st.markdown("---")
         
         # 问答区域
-        st.markdown("### 💭 智能问答")
+        st.markdown("### 💭 智能文档问答")
         
         # 问题输入
         question = st.text_area(
@@ -120,8 +120,6 @@ def render_document_qa_tab(mcp_agent):
         
         # 高级选项
         options = render_advanced_options(mode="qa")
-        
-        mcp_options = render_mcp_options()
         
         # 问答按钮
         button_text = "🧠 开始深度分析"
@@ -137,8 +135,8 @@ def render_document_qa_tab(mcp_agent):
                     options.get("answer_style", "detailed"),
                     options.get("include_quotes", True),
                     options.get("confidence_threshold", 0.7),
-                    mcp_options.get("max_iterations", 10),
-                    mcp_options.get("show_thinking", True),
+                    options.get("max_iterations", 10),
+                    options.get("show_thinking", True),
                     options.get("use_rag", True),
                     options.get("use_reranker", True),
                     options.get("rag_top_k", 12),
@@ -176,7 +174,7 @@ def render_data_analysis_tab(mcp_agent):
     
     if data_uploader is not None:
         st.success(f"✅ 数据文件已加载: **{data_uploader.name}**")
-        
+        st.markdown("### 💭 智能数据分析")
         # 分析要求输入
         analysis_requirements = st.text_area(
             "请输入您的分析要求",
